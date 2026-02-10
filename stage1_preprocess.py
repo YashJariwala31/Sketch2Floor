@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Stage 1: Binary Structure Extraction and Edge Stabilization
 Sketch2Floor Project - Extract stable wall geometry and wall-aligned edges
