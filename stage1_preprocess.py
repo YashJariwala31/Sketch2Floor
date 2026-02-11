@@ -1,32 +1,4 @@
-"""
-Stage 1: Binary Structure Extraction and Edge Stabilization
-Sketch2Floor Project - Extract stable wall geometry and wall-aligned edges
-
-Core Principle: Binary defines geometry. Edges are derived, never detected.
-
-This is a DETERMINISTIC single pipeline:
-- No adaptive strategy switching
-- No edge-density heuristics  
-- No Canny on grayscale
-- Binary structure dominates edge structure
-
-Pipeline Steps:
-1. Bilateral filtering for denoising
-2. Otsu thresholding (binary inverse)
-3. Morphological closing for stroke connection
-4. Morphological opening for noise suppression
-5. Connected component filtering
-6. Morphological gradient for edge generation
-7. Edge cleanup with morphological closing
-
-Explicitly Forbidden:
-- Canny on grayscale
-- Adaptive strategy switching
-- Edge-density heuristics
-- CLAHE
-- Multi-scale edge detection
-- Using edges to infer geometry
-"""
+# stage1_preprocess.py
 
 import sys
 import os

@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 
 # Virtual environment
-venv/
+.venv/
 
 # Data (raw or generated)
 data/

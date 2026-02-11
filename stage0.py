@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-"""
-Stage 0: Ground Check
-Sketch2Floor Project - Convert hand-drawn sketches to floor plans
-
-This stage verifies fundamental understanding of image representation and vector math.
-"""
+# stage0.py
 
 import sys
 import os
