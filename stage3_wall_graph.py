@@ -1,12 +1,20 @@
 # stage3_wall_graph.py
 #
-# Stage 3 - Wall Graph Construction
-# Convert merged wall line segments into a clean topological wall connectivity
-# graph suitable for room detection.
+# Stage 3 – Wall Graph Construction
+# Convert orthogonal wall line segments into a clean connectivity graph using
+# exact geometric intersection logic.
 #
 # Input:  data/intermediate/wall_line_segments.json  (from Stage 2)
 # Output: data/intermediate/wall_graph.json
 #         data/intermediate/wall_graph_overlay.png
+#
+# Explicitly forbidden:
+#   - Endpoint proximity merging
+#   - Floating point tolerance snapping
+#   - KD-tree nearest neighbor clustering
+#   - Skeletonization / Adaptive thresholds / Diagonal logic
+#   - Shapely buffering / geometric inflation
+#   - Machine learning
 
 import sys
 import os
@@ -27,313 +35,410 @@ def get_image_dimensions():
     if os.path.exists(binary_path):
         bimg = cv2.imread(binary_path, cv2.IMREAD_GRAYSCALE)
         if bimg is not None:
-            return bimg.shape[:2]
+            return bimg.shape[:2]          # (height, width)
     return (2000, 2000)
 
 
 # ---------------------------------------------------------------------------
-# 1. Load segments
+# Step 1: Load & normalise segments
 # ---------------------------------------------------------------------------
 
 def load_segments(json_path=None):
-    """Load wall line segments from Stage 2 output and normalise to int."""
+    """
+    Load wall line segments from Stage 2 output.
+    Normalise each segment into canonical form:
+      horizontal => y = constant, x_min <= x_max
+      vertical   => x = constant, y_min <= y_max
+    Coordinates are rounded to int.
+    """
     if json_path is None:
         json_path = os.path.join("data", "intermediate", "wall_line_segments.json")
     if not os.path.exists(json_path):
         print(f"Error: Segment file not found at {json_path}")
         sys.exit(1)
+
     with open(json_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
+
     segments = []
-    for idx, s in enumerate(raw):
+    for s in raw:
         x1, y1 = int(round(s["start"][0])), int(round(s["start"][1]))
-        x2, y2 = int(round(s["end"][0])), int(round(s["end"][1]))
+        x2, y2 = int(round(s["end"][0])),   int(round(s["end"][1]))
         ori = s["orientation"]
+
+        # Canonical ordering: smaller coordinate first
         if ori == "horizontal":
             if x1 > x2:
                 x1, x2 = x2, x1
-        else:
+            # ensure y is identical at both endpoints
+            y2 = y1
+        else:   # vertical
             if y1 > y2:
                 y1, y2 = y2, y1
+            # ensure x is identical at both endpoints
+            x2 = x1
+
         segments.append({
-            "idx": idx,
             "start": (x1, y1),
-            "end": (x2, y2),
+            "end":   (x2, y2),
             "orientation": ori,
         })
+
     h_count = sum(1 for s in segments if s["orientation"] == "horizontal")
     v_count = sum(1 for s in segments if s["orientation"] == "vertical")
-    print(f"Loaded {len(segments)} wall segments (H: {h_count}, V: {v_count})")
+    print(f"Loaded {len(segments)} wall segments  (H={h_count}, V={v_count})")
     return segments
 
 
 # ---------------------------------------------------------------------------
-# 2-3. Build points with segment membership tracking
+# Step 1b: Normalize segments – extend endpoints to meet perpendicular walls
 # ---------------------------------------------------------------------------
 
-def _point_on_seg(px, py, seg, tol=0):
-    """Check if point (px,py) lies on segment within tolerance."""
-    x1, y1 = seg["start"]
-    x2, y2 = seg["end"]
-    if seg["orientation"] == "horizontal":
-        return abs(py - y1) <= tol and (x1 - tol) <= px <= (x2 + tol)
-    else:
-        return abs(px - x1) <= tol and (y1 - tol) <= py <= (y2 + tol)
-
-
-def compute_all_graph_points(segments, max_dim):
+def normalize_segments(segments, max_dim):
     """
-    Build the full set of graph node candidates with segment membership.
+    Align each segment's endpoints to nearby perpendicular wall axis lines.
+    This compensates for the small coordinate misalignments (typically 1-35px)
+    that remain after Stage 2 merging.
 
-    Each point tracks which segment indices it belongs to. This ensures
-    that when segments are later split, every point is found on the correct
-    segments.
+    For each endpoint of a segment, find the closest perpendicular wall axis
+    line and move the endpoint along its own axis to meet that line.  This
+    includes both *extending* (making the segment longer) and *snapping*
+    (adjusting an endpoint that overshoots or undershoots by a few pixels).
 
-    Returns: list of (x, y, set_of_segment_indices)
+    The perpendicular wall must actually span near the endpoint for the
+    alignment to fire.
     """
-    snap_tol = max(5, int(0.01 * max_dim))
-    corner_tol = max(15, int(0.025 * max_dim))
+    ext_tol = max(20, int(0.02 * max_dim))   # alignment tolerance
+    micro_tol = 5  # unconditional snap for very small offsets (no span check)
 
-    # point -> set of segment indices
-    point_segs = defaultdict(set)
-
-    # --- (A) All segment endpoints ---
-    for seg in segments:
-        point_segs[seg["start"]].add(seg["idx"])
-        point_segs[seg["end"]].add(seg["idx"])
-
-    # --- (B) Exact H x V intersections ---
     horiz = [s for s in segments if s["orientation"] == "horizontal"]
-    vert = [s for s in segments if s["orientation"] == "vertical"]
-    exact_count = 0
-    for h in horiz:
-        hx1, hy = h["start"]
-        hx2, _ = h["end"]
-        for v in vert:
-            vx, vy1 = v["start"]
-            _, vy2 = v["end"]
-            if hx1 <= vx <= hx2 and vy1 <= hy <= vy2:
-                pt = (vx, hy)
-                point_segs[pt].add(h["idx"])
-                point_segs[pt].add(v["idx"])
-                exact_count += 1
+    vert  = [s for s in segments if s["orientation"] == "vertical"]
 
-    # --- (C) T-junction snap: endpoint near body of another segment ---
-    snap_count = 0
-    for seg in segments:
-        for ep_key in ("start", "end"):
-            px, py = seg[ep_key]
-            for other in segments:
-                if seg["idx"] == other["idx"]:
-                    continue
-                ox1, oy1 = other["start"]
-                ox2, oy2 = other["end"]
-                if other["orientation"] == "horizontal":
-                    # other is y=oy1, x in [ox1, ox2]
-                    if (ox1 - snap_tol <= px <= ox2 + snap_tol
-                            and abs(py - oy1) <= snap_tol):
-                        proj_x = max(ox1, min(ox2, px))
-                        pt = (proj_x, oy1)
-                        point_segs[pt].add(seg["idx"])
-                        point_segs[pt].add(other["idx"])
-                        snap_count += 1
-                else:
-                    # other is x=ox1, y in [oy1, oy2]
-                    if (oy1 - snap_tol <= py <= oy2 + snap_tol
-                            and abs(px - ox1) <= snap_tol):
-                        proj_y = max(oy1, min(oy2, py))
-                        pt = (ox1, proj_y)
-                        point_segs[pt].add(seg["idx"])
-                        point_segs[pt].add(other["idx"])
-                        snap_count += 1
+    # Gather axis values of perpendicular segments
+    v_xs = sorted(set(v["start"][0] for v in vert))   # vertical x positions
+    h_ys = sorted(set(h["start"][1] for h in horiz))  # horizontal y positions
 
-    # --- (D) L-corner: endpoints of H-V pairs that are close ---
-    corner_count = 0
-    for h in horiz:
-        for h_ep in ("start", "end"):
-            hx, hy = h[h_ep]
-            for v in vert:
-                for v_ep in ("start", "end"):
-                    vx, vy = v[v_ep]
-                    d = math.hypot(hx - vx, hy - vy)
-                    if 0 < d <= corner_tol:
-                        # Create intersection at the axis crossing point
-                        pt = (vx, hy)
-                        point_segs[pt].add(h["idx"])
-                        point_segs[pt].add(v["idx"])
-                        corner_count += 1
-
-    print(f"Intersections: {exact_count} exact + {snap_count} T-snap + "
-          f"{corner_count} L-corner (snap_tol={snap_tol}, corner_tol={corner_tol})")
-    print(f"Unique candidate points: {len(point_segs)}")
-
-    # Convert to list form
+    adjustments = 0
     result = []
-    for (x, y), seg_ids in point_segs.items():
-        result.append((x, y, seg_ids))
+
+    def _find_closest(val, candidates, tol):
+        """Find the candidate closest to val within tol. Return it or None."""
+        best = None
+        best_d = tol + 1
+        for c in candidates:
+            d = abs(c - val)
+            if d <= tol and d < best_d:
+                best = c
+                best_d = d
+        return best
+
+    def _try_align_to_axis(val, axis_candidates, perp_segs, seg_x, tol, mt):
+        """
+        Try to align val to the nearest axis line.
+        - First try within micro_tol (unconditional snap).
+        - Then try within tol, but only if a perpendicular segment spans near seg_x.
+        Returns new val and whether an adjustment was made.
+        """
+        best = _find_closest(val, axis_candidates, tol)
+        if best is None or best == val:
+            return val, False
+
+        gap = abs(best - val)
+
+        # Micro-snap: very small gap, snap unconditionally
+        if gap <= mt:
+            return best, True
+
+        # Larger gap: need span verification
+        for ps in perp_segs:
+            if ps["orientation"] == "horizontal":
+                if ps["start"][1] == best:
+                    hx_min, hx_max = ps["start"][0], ps["end"][0]
+                    if hx_min - tol <= seg_x <= hx_max + tol:
+                        return best, True
+            else:  # vertical
+                if ps["start"][0] == best:
+                    vy_min, vy_max = ps["start"][1], ps["end"][1]
+                    if vy_min - tol <= seg_x <= vy_max + tol:
+                        return best, True
+
+        return val, False
+
+    for seg in segments:
+        x1, y1 = seg["start"]
+        x2, y2 = seg["end"]
+        ori = seg["orientation"]
+
+        if ori == "horizontal":
+            # --- Align x1 (left endpoint) to nearest vertical axis ---
+            new_x1, changed = _try_align_to_axis(x1, v_xs, vert, y1, ext_tol, micro_tol)
+            if changed:
+                x1 = new_x1
+                adjustments += 1
+
+            # --- Align x2 (right endpoint) to nearest vertical axis ---
+            new_x2, changed = _try_align_to_axis(x2, v_xs, vert, y1, ext_tol, micro_tol)
+            if changed:
+                x2 = new_x2
+                adjustments += 1
+
+            # Ensure canonical order after alignment
+            if x1 > x2:
+                x1, x2 = x2, x1
+            result.append({"start": (x1, y1), "end": (x2, y1), "orientation": ori})
+
+        else:  # vertical
+            # --- Align y1 (top endpoint) to nearest horizontal axis ---
+            new_y1, changed = _try_align_to_axis(y1, h_ys, horiz, x1, ext_tol, micro_tol)
+            if changed:
+                y1 = new_y1
+                adjustments += 1
+
+            # --- Align y2 (bottom endpoint) to nearest horizontal axis ---
+            new_y2, changed = _try_align_to_axis(y2, h_ys, horiz, x1, ext_tol, micro_tol)
+            if changed:
+                y2 = new_y2
+                adjustments += 1
+
+            # Ensure canonical order after alignment
+            if y1 > y2:
+                y1, y2 = y2, y1
+            result.append({"start": (x1, y1), "end": (x1, y2), "orientation": ori})
+
+    if adjustments:
+        print(f"Aligned {adjustments} segment endpoint(s)  (ext_tol={ext_tol}px)")
+    else:
+        print("No segment endpoints aligned")
     return result
 
 
 # ---------------------------------------------------------------------------
-# 4. Merge near-duplicate points
+# Step 2: Compute exact intersections  (H x V pairs only)
 # ---------------------------------------------------------------------------
 
-def merge_near_points(point_list, tolerance=5):
+def compute_exact_intersections(segments):
     """
-    Union-find merge: any two points within `tolerance` px (Chebyshev)
-    collapse into their centroid.  Segment membership sets are unioned.
+    For every (horizontal, vertical) pair, check strict interval overlap:
+      vertical.x  in [horizontal.x_min, horizontal.x_max]
+      horizontal.y in [vertical.y_min,   vertical.y_max]
+    No tolerance is used.
+
+    Returns: list of (x, y) intersection points.
     """
-    n = len(point_list)
-    parent = list(range(n))
+    horiz = [s for s in segments if s["orientation"] == "horizontal"]
+    vert  = [s for s in segments if s["orientation"] == "vertical"]
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+    intersections = []
+    for h in horiz:
+        hx_min, hy = h["start"]
+        hx_max, _  = h["end"]
+        for v in vert:
+            vx, vy_min = v["start"]
+            _,  vy_max = v["end"]
+            if hx_min <= vx <= hx_max and vy_min <= hy <= vy_max:
+                intersections.append((vx, hy))
 
-    def union(a, b):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    coords = [(p[0], p[1]) for p in point_list]
-    for i in range(n):
-        for j in range(i + 1, n):
-            dx = abs(coords[i][0] - coords[j][0])
-            dy = abs(coords[i][1] - coords[j][1])
-            if dx <= tolerance and dy <= tolerance:
-                union(i, j)
-
-    groups = {}
-    for i in range(n):
-        r = find(i)
-        groups.setdefault(r, []).append(i)
-
-    merged = []
-    for indices in groups.values():
-        xs = [point_list[i][0] for i in indices]
-        ys = [point_list[i][1] for i in indices]
-        cx = int(round(sum(xs) / len(xs)))
-        cy = int(round(sum(ys) / len(ys)))
-        all_segs = set()
-        for i in indices:
-            all_segs.update(point_list[i][2])
-        merged.append((cx, cy, all_segs))
-
-    removed = n - len(merged)
-    if removed:
-        print(f"Merged {removed} near-duplicate points (tolerance={tolerance}px)")
-    print(f"Nodes after merge: {len(merged)}")
-    return merged
+    print(f"Exact HxV intersections found: {len(intersections)}")
+    return intersections
 
 
 # ---------------------------------------------------------------------------
-# 5. Build graph nodes
+# Step 3: Split segments at intersections
 # ---------------------------------------------------------------------------
 
-def build_nodes(merged_points):
-    """Assign sequential integer IDs. Returns nodes list and seg->nodes map."""
-    nodes = []
-    seg_to_nodes = defaultdict(list)
-    for idx, (x, y, seg_ids) in enumerate(merged_points):
-        node = {"id": idx, "x": x, "y": y}
-        nodes.append(node)
-        for sid in seg_ids:
-            seg_to_nodes[sid].append(node)
-    return nodes, seg_to_nodes
-
-
-# ---------------------------------------------------------------------------
-# 6. Build edges by splitting segments at their registered nodes
-# ---------------------------------------------------------------------------
-
-def build_edges(segments, seg_to_nodes):
+def split_segments_at_intersections(segments, intersections):
     """
-    For each segment, sort its registered nodes along the segment axis,
-    then create an edge between every consecutive pair.
+    For each segment, collect:
+      - its two original endpoints
+      - every intersection point that lies exactly on it
+    Sort these points along the segment's axis, then create new sub-segments
+    between consecutive points.
     """
-    edges = []
+    # Build a quick lookup: intersection points per axis value
+    # For horizontal segs (y=const), key = y; for vertical segs (x=const), key = x
+    pts_by_y = defaultdict(list)   # y -> list of x values
+    pts_by_x = defaultdict(list)   # x -> list of y values
+    for (ix, iy) in intersections:
+        pts_by_y[iy].append(ix)
+        pts_by_x[ix].append(iy)
+
+    split_segs = []
+
     for seg in segments:
-        nodes_on = seg_to_nodes.get(seg["idx"], [])
-        if len(nodes_on) < 2:
-            continue
-        if seg["orientation"] == "horizontal":
-            nodes_on.sort(key=lambda n: n["x"])
-        else:
-            nodes_on.sort(key=lambda n: n["y"])
+        x1, y1 = seg["start"]
+        x2, y2 = seg["end"]
+        ori = seg["orientation"]
 
-        for i in range(len(nodes_on) - 1):
-            a, b = nodes_on[i], nodes_on[i + 1]
-            if a["id"] == b["id"]:
-                continue
-            length = math.hypot(b["x"] - a["x"], b["y"] - a["y"])
-            if length > 0:
-                edges.append({
-                    "start_node": a["id"],
-                    "end_node": b["id"],
-                    "length_px": round(length, 2),
+        if ori == "horizontal":
+            # Collect all x-coords of intersections on this segment (y == y1)
+            candidate_xs = pts_by_y.get(y1, [])
+            xs_on_seg = [cx for cx in candidate_xs if x1 <= cx <= x2]
+            # Always include original endpoints
+            all_xs = sorted(set([x1, x2] + xs_on_seg))
+            for i in range(len(all_xs) - 1):
+                split_segs.append({
+                    "start": (all_xs[i],   y1),
+                    "end":   (all_xs[i+1], y1),
+                    "orientation": "horizontal",
+                })
+        else:  # vertical
+            candidate_ys = pts_by_x.get(x1, [])
+            ys_on_seg = [cy for cy in candidate_ys if y1 <= cy <= y2]
+            all_ys = sorted(set([y1, y2] + ys_on_seg))
+            for i in range(len(all_ys) - 1):
+                split_segs.append({
+                    "start": (x1, all_ys[i]),
+                    "end":   (x1, all_ys[i+1]),
+                    "orientation": "vertical",
                 })
 
-    # Deduplicate
-    seen = set()
-    unique = []
-    for e in edges:
-        key = (min(e["start_node"], e["end_node"]),
-               max(e["start_node"], e["end_node"]))
-        if key not in seen:
-            seen.add(key)
-            unique.append(e)
-    print(f"Graph edges after splitting: {len(unique)}")
-    return unique
+    print(f"Segments after splitting: {len(split_segs)}  "
+          f"(from {len(segments)} originals)")
+    return split_segs
 
 
 # ---------------------------------------------------------------------------
-# 7. Remove dangling edges
+# Step 4: Build nodes  (exact coordinate matching only)
+# ---------------------------------------------------------------------------
+
+def build_nodes(split_segments):
+    """
+    Create graph nodes from all unique (x, y) coordinates found in the
+    split segments.  Exact matching only – no proximity merging.
+    Returns:
+        nodes  – list of {"id": int, "x": int, "y": int}
+        coord_to_id – dict mapping (x, y) -> node id
+    """
+    coord_set = set()
+    for seg in split_segments:
+        coord_set.add(seg["start"])
+        coord_set.add(seg["end"])
+
+    # Deterministic ordering: sort by (x, y)
+    sorted_coords = sorted(coord_set)
+    coord_to_id = {}
+    nodes = []
+    for idx, (x, y) in enumerate(sorted_coords):
+        coord_to_id[(x, y)] = idx
+        nodes.append({"id": idx, "x": x, "y": y})
+
+    print(f"Graph nodes: {len(nodes)}")
+    return nodes, coord_to_id
+
+
+# ---------------------------------------------------------------------------
+# Step 5: Build edges
+# ---------------------------------------------------------------------------
+
+def build_edges(split_segments, coord_to_id):
+    """
+    Create graph edges from split wall segments.
+    Each edge stores: start_node_id, end_node_id, orientation, length_px.
+    Duplicate edges (same pair of node ids) are removed.
+    """
+    seen = set()
+    edges = []
+
+    for seg in split_segments:
+        sid = coord_to_id[seg["start"]]
+        eid = coord_to_id[seg["end"]]
+        if sid == eid:
+            continue
+        key = (min(sid, eid), max(sid, eid))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        sx, sy = seg["start"]
+        ex, ey = seg["end"]
+        length = math.hypot(ex - sx, ey - sy)
+
+        edges.append({
+            "start_node_id": sid,
+            "end_node_id":   eid,
+            "orientation":   seg["orientation"],
+            "length_px":     round(length, 2),
+        })
+
+    print(f"Graph edges: {len(edges)}")
+    return edges
+
+
+# ---------------------------------------------------------------------------
+# Step 6: Remove micro-edges  (length < 0.03 * max_image_dimension)
+# ---------------------------------------------------------------------------
+
+def remove_micro_edges(edges, max_dim):
+    """
+    Remove wall fragments shorter than 3 % of the largest image dimension.
+    """
+    threshold = 0.03 * max_dim
+    kept = [e for e in edges if e["length_px"] >= threshold]
+    removed = len(edges) - len(kept)
+    if removed:
+        print(f"Removed {removed} micro-edge(s)  (threshold={threshold:.1f}px)")
+    else:
+        print(f"No micro-edges removed  (threshold={threshold:.1f}px)")
+    return kept
+
+
+# ---------------------------------------------------------------------------
+# Step 7: Remove dangling edges  (iterative, until stable)
 # ---------------------------------------------------------------------------
 
 def _degree_map(nodes, edges):
     deg = {n["id"]: 0 for n in nodes}
     for e in edges:
-        deg[e["start_node"]] += 1
-        deg[e["end_node"]] += 1
+        deg[e["start_node_id"]] = deg.get(e["start_node_id"], 0) + 1
+        deg[e["end_node_id"]]   = deg.get(e["end_node_id"], 0) + 1
     return deg
 
 
-def remove_dangling_edges(nodes, edges, min_length):
+def remove_dangling_edges(nodes, edges, max_dim):
     """
-    Iteratively remove edges where at least one endpoint is degree-1 and
-    the edge is shorter than min_length. Repeat until stable.
+    Iteratively remove edges connected to degree-1 nodes if shorter than
+    threshold.  Repeat until stable.
+    Threshold = 0.03 * max_dim  (same as micro-edge threshold).
     """
+    threshold = 0.03 * max_dim
+    total_removed = 0
     changed = True
-    removed_total = 0
+
     while changed:
         changed = False
         deg = _degree_map(nodes, edges)
         keep = []
         for e in edges:
-            s_deg = deg[e["start_node"]]
-            e_deg = deg[e["end_node"]]
-            if (s_deg == 1 or e_deg == 1) and e["length_px"] < min_length:
+            s_deg = deg.get(e["start_node_id"], 0)
+            e_deg = deg.get(e["end_node_id"], 0)
+            if (s_deg == 1 or e_deg == 1) and e["length_px"] < threshold:
                 changed = True
-                removed_total += 1
+                total_removed += 1
             else:
                 keep.append(e)
         edges = keep
-    if removed_total:
-        print(f"Removed {removed_total} dangling short edge(s) "
-              f"(min_length={min_length:.1f}px)")
+
+    if total_removed:
+        print(f"Removed {total_removed} dangling edge(s)  "
+              f"(threshold={threshold:.1f}px)")
     else:
         print("No dangling edges removed")
     return edges
 
 
 # ---------------------------------------------------------------------------
-# 8. Connected component analysis
+# Step 8: Connected component validation
 # ---------------------------------------------------------------------------
 
 def connected_components(nodes, edges):
-    """Union-find connected-component analysis. Reports diagnostics only."""
+    """
+    Union-find connected-component analysis.
+    Success: largest component contains majority of nodes.
+    """
+    if not nodes:
+        print("Connected components: 0 nodes – skipped")
+        return 0
+
     parent = {n["id"]: n["id"] for n in nodes}
 
     def find(x):
@@ -347,78 +452,120 @@ def connected_components(nodes, edges):
         if ra != rb:
             parent[rb] = ra
 
+    # Only count nodes that actually participate in edges
+    active_ids = set()
     for e in edges:
-        union(e["start_node"], e["end_node"])
+        active_ids.add(e["start_node_id"])
+        active_ids.add(e["end_node_id"])
+        union(e["start_node_id"], e["end_node_id"])
 
-    comp_sizes = {}
-    for n in nodes:
-        r = find(n["id"])
-        comp_sizes[r] = comp_sizes.get(r, 0) + 1
+    comp_sizes = defaultdict(int)
+    for nid in active_ids:
+        comp_sizes[find(nid)] += 1
 
-    num_components = len(comp_sizes)
-    sorted_comps = sorted(comp_sizes.values(), reverse=True)
+    num_comp = len(comp_sizes)
+    sorted_sizes = sorted(comp_sizes.values(), reverse=True)
 
-    if num_components == 1:
-        print(f"Connected components: 1 (single component, {sorted_comps[0]} nodes)")
+    if num_comp == 0:
+        print("Connected components: 0 (no edges)")
+    elif num_comp == 1:
+        print(f"Connected components: 1  ({sorted_sizes[0]} nodes)  [PASS]")
     else:
-        print(f"Connected components: {num_components}  "
-              f"sizes: {sorted_comps[:8]}{'...' if num_components > 8 else ''}")
-    return num_components
+        largest = sorted_sizes[0]
+        pct = largest / len(active_ids) * 100 if active_ids else 0
+        status = "PASS" if pct >= 50 else "WARN"
+        print(f"Connected components: {num_comp}  "
+              f"sizes={sorted_sizes[:8]}{'...' if num_comp > 8 else ''}  "
+              f"largest={largest} ({pct:.0f}%)  [{status}]")
+
+    return num_comp
 
 
 # ---------------------------------------------------------------------------
-# 9. Prune orphan nodes
+# Prune orphan nodes  (nodes with no remaining edges)
 # ---------------------------------------------------------------------------
 
 def prune_orphan_nodes(nodes, edges):
-    """Remove nodes that have no remaining edges."""
-    used = set()
+    """Remove nodes that have no remaining edges and re-index."""
+    used_ids = set()
     for e in edges:
-        used.add(e["start_node"])
-        used.add(e["end_node"])
-    pruned = [n for n in nodes if n["id"] in used]
+        used_ids.add(e["start_node_id"])
+        used_ids.add(e["end_node_id"])
+
+    pruned = [n for n in nodes if n["id"] in used_ids]
     removed = len(nodes) - len(pruned)
     if removed:
         print(f"Pruned {removed} orphan node(s)")
-    return pruned
+
+    # Re-index node IDs to be contiguous 0..N-1
+    old_to_new = {}
+    renumbered = []
+    for new_id, n in enumerate(pruned):
+        old_to_new[n["id"]] = new_id
+        renumbered.append({"id": new_id, "x": n["x"], "y": n["y"]})
+
+    # Update edge references
+    for e in edges:
+        e["start_node_id"] = old_to_new[e["start_node_id"]]
+        e["end_node_id"]   = old_to_new[e["end_node_id"]]
+
+    return renumbered, edges
 
 
 # ---------------------------------------------------------------------------
-# 10. Save & visualise
+# Save & visualise
 # ---------------------------------------------------------------------------
 
 def save_graph(nodes, edges, save_dir=None):
     if save_dir is None:
         save_dir = os.path.join("data", "intermediate")
     os.makedirs(save_dir, exist_ok=True)
+
     out = {"nodes": nodes, "edges": edges}
     path = os.path.join(save_dir, "wall_graph.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2)
-    print(f"Wall graph saved to: {path}")
+    print(f"Wall graph saved -> {path}")
 
 
 def visualize_graph(nodes, edges, img_shape, save_dir=None):
-    """Draw nodes (circles) and edges (lines) on a black canvas."""
+    """Draw nodes and edges on both a black canvas and a wall-mask overlay."""
     if save_dir is None:
         save_dir = os.path.join("data", "intermediate")
     os.makedirs(save_dir, exist_ok=True)
 
-    canvas = np.zeros((img_shape[0], img_shape[1], 3), dtype=np.uint8)
     nmap = {n["id"]: (n["x"], n["y"]) for n in nodes}
 
-    for e in edges:
-        cv2.line(canvas, nmap[e["start_node"]], nmap[e["end_node"]],
-                 (0, 200, 0), 2, cv2.LINE_AA)
-    for n in nodes:
-        cv2.circle(canvas, (n["x"], n["y"]), 5, (0, 100, 255), -1, cv2.LINE_AA)
-        cv2.putText(canvas, str(n["id"]), (n["x"] + 7, n["y"] - 7),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1,
-                    cv2.LINE_AA)
+    def _draw(canvas):
+        for e in edges:
+            pt1 = nmap[e["start_node_id"]]
+            pt2 = nmap[e["end_node_id"]]
+            cv2.line(canvas, pt1, pt2, (0, 200, 0), 2, cv2.LINE_AA)
+        for n in nodes:
+            cv2.circle(canvas, (n["x"], n["y"]), 5, (0, 100, 255), -1, cv2.LINE_AA)
+            cv2.putText(canvas, str(n["id"]),
+                        (n["x"] + 7, n["y"] - 7),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                        (255, 255, 255), 1, cv2.LINE_AA)
+        return canvas
 
+    # --- Black-background version ---
+    canvas = np.zeros((img_shape[0], img_shape[1], 3), dtype=np.uint8)
+    _draw(canvas)
     path = os.path.join(save_dir, "wall_graph_overlay.png")
-    cv2.imwrite(out_path := path, canvas)
-    print(f"Graph overlay saved to: {out_path}")
+    cv2.imwrite(path, canvas)
+    print(f"Graph overlay saved -> {path}")
+
+    # --- Wall-mask overlay version ---
+    mask_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
+    if os.path.exists(mask_path):
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask is not None:
+            bg = cv2.cvtColor(mask // 3, cv2.COLOR_GRAY2BGR)  # dim wall mask
+            _draw(bg)
+            path2 = os.path.join(save_dir, "wall_graph_on_mask.png")
+            cv2.imwrite(path2, bg)
+            print(f"Graph-on-mask overlay saved -> {path2}")
 
 
 # ---------------------------------------------------------------------------
@@ -435,19 +582,20 @@ def quality_checks(nodes, edges):
     d3 = sum(1 for v in deg.values() if v >= 3)
 
     print("\n--- Quality Checks ---")
-    print(f"  Nodes: {len(nodes)}")
-    print(f"  Edges: {len(edges)}")
-    print(f"  Duplicate nodes: {dup}  [{'PASS' if dup == 0 else 'WARN'}]")
-    print(f"  Zero-length edges: {zero}  [{'PASS' if zero == 0 else 'WARN'}]")
-    print(f"  Degree distribution: deg-1={d1}, deg-2={d2}, deg-3+={d3}")
+    print(f"  Nodes:            {len(nodes)}")
+    print(f"  Edges:            {len(edges)}")
+    print(f"  Duplicate nodes:  {dup}  [{'PASS' if dup == 0 else 'WARN'}]")
+    print(f"  Zero-length edges:{zero}  [{'PASS' if zero == 0 else 'WARN'}]")
+    print(f"  Degree dist:      deg-1={d1}, deg-2={d2}, deg-3+={d3}")
+
     ok = dup == 0 and zero == 0
     if ok:
-        print("  All quality checks passed [PASS]")
+        print("  All quality checks passed  [PASS]")
     return ok
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main pipeline
 # ---------------------------------------------------------------------------
 
 def main():
@@ -455,44 +603,51 @@ def main():
     if len(sys.argv) >= 2:
         json_path = sys.argv[1]
 
-    print("Stage 3: Wall Graph Construction")
-    print("=" * 50)
+    print("=" * 55)
+    print("  Stage 3: Wall Graph Construction  (exact geometry)")
+    print("=" * 55)
+    print()
 
+    # Image dimensions for thresholds
     img_shape = get_image_dimensions()
     max_dim = max(img_shape)
-    print(f"Image: {img_shape[1]}x{img_shape[0]} (max_dim={max_dim})")
+    print(f"Image: {img_shape[1]}x{img_shape[0]}  max_dim={max_dim}")
 
-    # Step 1 - Load
+    # 1. Load & normalise segments
     segments = load_segments(json_path)
 
-    # Step 2-3 - Compute all graph points with segment membership
-    point_list = compute_all_graph_points(segments, max_dim)
+    # 1b. Normalize: extend endpoints to meet perpendicular walls
+    segments = normalize_segments(segments, max_dim)
 
-    # Step 4 - Merge near-duplicates
-    merge_tol = max(3, int(0.003 * max_dim))
-    merged = merge_near_points(point_list, tolerance=merge_tol)
+    # 2. Compute exact HxV intersections
+    intersections = compute_exact_intersections(segments)
 
-    # Step 5 - Build nodes
-    nodes, seg_to_nodes = build_nodes(merged)
+    # 3. Split segments at intersection points
+    split_segs = split_segments_at_intersections(segments, intersections)
 
-    # Step 6 - Build edges
-    edges = build_edges(segments, seg_to_nodes)
+    # 4. Build nodes (exact coordinate matching)
+    nodes, coord_to_id = build_nodes(split_segs)
 
-    # Step 7 - Remove dangling short stubs
-    min_dangle = 0.10 * max_dim
-    edges = remove_dangling_edges(nodes, edges, min_dangle)
+    # 5. Build edges
+    edges = build_edges(split_segs, coord_to_id)
 
-    # Step 8 - Connected components (report only)
-    num_comp = connected_components(nodes, edges)
+    # 6. Remove micro-edges
+    edges = remove_micro_edges(edges, max_dim)
 
-    # Step 9 - Prune orphans
-    nodes = prune_orphan_nodes(nodes, edges)
+    # 7. Remove dangling edges (iterative)
+    edges = remove_dangling_edges(nodes, edges, max_dim)
+
+    # 8. Connected component validation
+    connected_components(nodes, edges)
+
+    # Prune orphan nodes & re-index
+    nodes, edges = prune_orphan_nodes(nodes, edges)
 
     # Save & visualise
     save_graph(nodes, edges)
     visualize_graph(nodes, edges, img_shape)
 
-    # Quality
+    # Quality report
     quality_checks(nodes, edges)
     print("\nStage 3 completed successfully!")
 
