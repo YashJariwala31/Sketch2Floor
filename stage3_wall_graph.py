@@ -1,29 +1,35 @@
 # stage3_wall_graph.py
 #
-# Stage 3 - Wall Graph Construction
+# Stage 3 – Wall Graph Construction (Axis-Normalized)
 #
-# Build a wall connectivity graph from axis-aligned segments (Stage 2).
+# Build a clean wall connectivity graph from axis-aligned segments (Stage 2).
 #
 # Core Principles:
-#   - Stage 2 segments are authoritative and unchanged.
+#   - Stage 2 segments are authoritative geometry.
+#   - Before any intersection work, near-identical axis coordinates are
+#     snapped to canonical values (vertical X's, horizontal Y's).
 #   - Intersections require strict containment inside segment bounds.
-#   - Tolerances applied independently, never stacked, never expand ranges.
+#   - Node membership is strictly tracked: a node may split a segment
+#     ONLY if it is an endpoint or was born from an intersection on it.
+#   - No geometric proximity checks for segment membership.
 #   - No artificial nodes or connections.
 #
-# Tolerances (independent):
-#   INTERSECTION: 0 (strict containment, no range expansion)
-#   NODE_CLUSTER: 2px Euclidean for merging coincident points
-#   SPLIT_AXIS:   2px for perpendicular axis proximity after clustering
-#   MIN_EDGE:     3px minimum edge length
+# Tolerances:
+#   AXIS_SNAP:    10px – snap near-identical axis coordinates
+#   INTERSECTION:  0   – strict containment, no range expansion
+#   NODE_CLUSTER:  3px – Euclidean merge for coincident points
+#   MIN_EDGE:     20px – discard short sub-segments
+#   NOISE_THRESH: 50px – remove components with total edge length below this
 #
 # Pipeline:
 #   1. load_segments
-#   2. detect_intersections  (strict H x V containment)
-#   3. collect candidate nodes (endpoints + intersections)
-#   4. cluster_nodes (merge within 2px Euclidean)
-#   5. split_segments (axis tolerance 2px, no range expansion)
-#   6. build_graph (deduplicated edges, no zero-length)
-#   7. clean_graph (keep largest connected component)
+#   2. normalize_axis_coordinates  (snap X of V segs, Y of H segs)
+#   3. detect_intersections        (strict H×V, track segment indices)
+#   4. collect candidate nodes     (endpoints + intersections only)
+#   5. cluster_nodes               (merge within 3px Euclidean)
+#   6. split_segments              (strict membership only)
+#   7. build_graph                 (deduplicated, no zero-length)
+#   8. clean_graph                 (remove noise components only)
 
 import sys
 import os
@@ -33,10 +39,11 @@ import numpy as np
 import cv2
 from collections import defaultdict
 
-# -- Tolerances (each used independently) ------------------------------------
-NODE_CLUSTER_TOL = 2   # Euclidean distance for merging coincident points
-SPLIT_AXIS_TOL = 2     # Perpendicular axis proximity in split_segments
-MIN_EDGE_LEN = 3       # Discard sub-segments shorter than this
+# -- Tolerances ---------------------------------------------------------------
+AXIS_SNAP_TOL = 10     # Snap near-identical axis coordinates
+NODE_CLUSTER_TOL = 3   # Euclidean distance for merging coincident points
+MIN_EDGE_LEN = 20      # Discard sub-segments shorter than this
+NOISE_THRESHOLD = 50   # Remove components with total edge length below this
 
 
 # =============================================================================
@@ -76,46 +83,166 @@ def load_segments(json_path=None):
 
 
 # =============================================================================
-# 2. Detect intersections (strict containment, no range expansion)
+# 2. Normalize axis coordinates
+# =============================================================================
+
+def _cluster_values(values, tol):
+    """
+    Cluster a list of integer values within *tol* of each other.
+    Returns a mapping {original_value: canonical_value} where canonical
+    is the integer-rounded mean of the cluster.
+
+    Uses greedy sorted clustering (no union-find needed for 1-D).
+    """
+    if not values:
+        return {}
+
+    uniq = sorted(set(values))
+    mapping = {}
+    cluster = [uniq[0]]
+
+    for v in uniq[1:]:
+        if v - cluster[0] <= tol:
+            # Still within tolerance of the cluster's first element
+            cluster.append(v)
+        else:
+            # Flush current cluster
+            canonical = round(sum(cluster) / len(cluster))
+            for cv in cluster:
+                mapping[cv] = canonical
+            cluster = [v]
+
+    # Flush last cluster
+    canonical = round(sum(cluster) / len(cluster))
+    for cv in cluster:
+        mapping[cv] = canonical
+
+    return mapping
+
+
+def normalize_axis_coordinates(segments, tol=AXIS_SNAP_TOL):
+    """
+    Snap near-identical axis coordinates so micro-duplicate walls merge.
+
+    - Collect all X values from vertical segments → cluster within *tol*
+    - Collect all Y values from horizontal segments → cluster within *tol*
+    - Update every segment endpoint using the snapped coordinates.
+
+    This eliminates cases like x=200 and x=204 getting treated as two
+    separate vertical walls.
+    """
+    # Collect axis values
+    v_xs = []
+    h_ys = []
+    for s in segments:
+        if s["orientation"] == "vertical":
+            v_xs.append(s["start"][0])
+            v_xs.append(s["end"][0])
+        else:
+            h_ys.append(s["start"][1])
+            h_ys.append(s["end"][1])
+
+    x_map = _cluster_values(v_xs, tol)
+    y_map = _cluster_values(h_ys, tol)
+
+    snapped_x = len([v for v in x_map.values() if v != x_map.get(v)])
+    snapped_y = len([v for v in y_map.values() if v != y_map.get(v)])
+
+    # Apply snapping to segment endpoints
+    out = []
+    for s in segments:
+        sx, sy = s["start"]
+        ex, ey = s["end"]
+        ori = s["orientation"]
+
+        if ori == "vertical":
+            sx = x_map.get(sx, sx)
+            ex = x_map.get(ex, ex)
+            # Also snap any Y if it happens to be in the horizontal Y map
+            sy = y_map.get(sy, sy)
+            ey = y_map.get(ey, ey)
+        else:
+            sy = y_map.get(sy, sy)
+            ey = y_map.get(ey, ey)
+            # Also snap any X if it happens to be in the vertical X map
+            sx = x_map.get(sx, sx)
+            ex = x_map.get(ex, ex)
+
+        # Re-canonicalize after snapping
+        if ori == "horizontal":
+            if sx > ex:
+                sx, ex = ex, sx
+            ey = sy
+        else:
+            if sy > ey:
+                sy, ey = ey, sy
+            ex = sx
+
+        out.append({
+            "start": (sx, sy), "end": (ex, ey), "orientation": ori,
+        })
+
+    x_clusters = len(set(x_map.values())) if x_map else 0
+    y_clusters = len(set(y_map.values())) if y_map else 0
+    print(f"Axis normalization:  X clusters={x_clusters}  Y clusters={y_clusters}"
+          f"  (tol={tol}px)")
+    return out
+
+
+# =============================================================================
+# 3. Detect intersections (strict containment, track segment indices)
 # =============================================================================
 
 def detect_intersections(segments):
     """
-    Strict H x V intersection.
+    Strict H × V intersection with segment-index tracking.
 
     Intersection exists ONLY if:
         hx1 <= vx <= hx2   (V's x within H's x-range inclusive)
         vy1 <= hy <= vy2   (H's y within V's y-range inclusive)
 
-    NO tolerance applied.  NO range expansion (hx1-tol, hx2+tol forbidden).
-    Intersection point is exactly (vx, hy).  NO snapping to endpoints.
-    """
-    horiz = [s for s in segments if s["orientation"] == "horizontal"]
-    vert  = [s for s in segments if s["orientation"] == "vertical"]
+    NO tolerance applied.  NO range expansion.
+    Intersection point is exactly (vx, hy).
 
-    points = []
-    for h in horiz:
+    Returns:
+        unique_points     – sorted list of unique intersection (x,y) tuples
+        seg_intersections – dict  {segment_index: set of intersection points}
+    """
+    h_indices = [i for i, s in enumerate(segments)
+                 if s["orientation"] == "horizontal"]
+    v_indices = [i for i, s in enumerate(segments)
+                 if s["orientation"] == "vertical"]
+
+    all_points = []
+    seg_intersections = defaultdict(set)   # seg_index -> set of (x,y)
+
+    for hi in h_indices:
+        h = segments[hi]
         hy  = h["start"][1]
         hx1 = h["start"][0]
         hx2 = h["end"][0]
-        for v in vert:
+        for vi in v_indices:
+            v = segments[vi]
             vx  = v["start"][0]
             vy1 = v["start"][1]
             vy2 = v["end"][1]
             if hx1 <= vx <= hx2 and vy1 <= hy <= vy2:
-                points.append((vx, hy))
+                pt = (vx, hy)
+                all_points.append(pt)
+                seg_intersections[hi].add(pt)
+                seg_intersections[vi].add(pt)
 
-    unique = sorted(set(points))
-    print(f"Strict intersections: {len(unique)}")
-    return unique
+    unique_points = sorted(set(all_points))
+    print(f"Strict intersections: {len(unique_points)}")
+    return unique_points, seg_intersections
 
 
 # =============================================================================
-# 3. Collect candidate nodes
+# 4. Collect candidate nodes
 # =============================================================================
 
 def collect_candidates(segments, intersections):
-    """Gather all segment endpoints and intersection points."""
+    """Gather all segment endpoints and intersection points.  Nothing else."""
     pts = set()
     for s in segments:
         pts.add(s["start"])
@@ -126,7 +253,7 @@ def collect_candidates(segments, intersections):
 
 
 # =============================================================================
-# 4. Cluster nodes (union-find, Euclidean <= NODE_CLUSTER_TOL)
+# 5. Cluster nodes (union-find, Euclidean <= NODE_CLUSTER_TOL)
 # =============================================================================
 
 def cluster_nodes(points, tol=NODE_CLUSTER_TOL):
@@ -185,33 +312,33 @@ def cluster_nodes(points, tol=NODE_CLUSTER_TOL):
 
 
 # =============================================================================
-# 5. Split segments at on-segment nodes
+# 6. Split segments at on-segment nodes (strict membership)
 # =============================================================================
 
-def split_segments(segments, node_positions, mapping, axis_tol=SPLIT_AXIS_TOL):
+def split_segments(segments, node_positions, mapping, seg_intersections):
     """
-    For each original segment, find clustered nodes that lie on it:
+    Strict membership splitting.  For each segment, the ONLY nodes that may
+    appear on it are:
 
-        Horizontal (y=hy, x in [hx1,hx2]):
-            |ny - hy| <= axis_tol   AND   hx1 <= nx <= hx2
+        1. Its own two endpoints (mapped through clustering).
+        2. Intersection points that were born from that specific segment
+           (looked up via seg_intersections), also mapped through clustering.
 
-        Vertical   (x=vx, y in [vy1,vy2]):
-            |nx - vx| <= axis_tol   AND   vy1 <= ny <= vy2
+    NO geometric proximity check (abs(ny-sy) <= tol) is used.
+    NO axis tolerance is applied.
 
-    Axis tolerance accounts for centroid rounding from clustering.
-    Range bounds are NOT expanded (no hx1-tol or hx2+tol).
-
-    Sort on-segment nodes along the axis and create sub-edges between
-    consecutive nodes.  Discard sub-segments shorter than MIN_EDGE_LEN.
+    Valid nodes are sorted along the segment axis and sub-edges are created
+    between consecutive nodes.  Sub-segments shorter than MIN_EDGE_LEN are
+    discarded.
     """
     edges = []
 
-    for seg in segments:
+    for seg_idx, seg in enumerate(segments):
         ori = seg["orientation"]
         sx, sy = seg["start"]
         ex, ey = seg["end"]
 
-        # The segment's own endpoints, mapped through clustering
+        # 1. Segment's own endpoints, mapped through clustering
         sp = mapping.get((sx, sy), (sx, sy))
         ep = mapping.get((ex, ey), (ex, ey))
 
@@ -219,14 +346,10 @@ def split_segments(segments, node_positions, mapping, axis_tol=SPLIT_AXIS_TOL):
         on_seg.add(sp)
         on_seg.add(ep)
 
-        for nd in node_positions:
-            nx, ny = nd
-            if ori == "horizontal":
-                if abs(ny - sy) <= axis_tol and sx <= nx <= ex:
-                    on_seg.add(nd)
-            else:
-                if abs(nx - sx) <= axis_tol and sy <= ny <= ey:
-                    on_seg.add(nd)
+        # 2. Intersection points that belong to THIS segment, mapped
+        for raw_pt in seg_intersections.get(seg_idx, set()):
+            clustered_pt = mapping.get(raw_pt, raw_pt)
+            on_seg.add(clustered_pt)
 
         # Sort along segment axis
         if ori == "horizontal":
@@ -247,7 +370,7 @@ def split_segments(segments, node_positions, mapping, axis_tol=SPLIT_AXIS_TOL):
 
 
 # =============================================================================
-# 6. Build graph
+# 7. Build graph
 # =============================================================================
 
 def build_graph(sub_edges, node_positions):
@@ -284,16 +407,28 @@ def build_graph(sub_edges, node_positions):
 
 
 # =============================================================================
-# 7. Clean graph - keep largest connected component
+# 8. Clean graph – remove noise components only
 # =============================================================================
 
-def clean_graph(nodes, edges):
-    """Remove floating fragments.  Keep only the largest component."""
+def clean_graph(nodes, edges, noise_threshold=NOISE_THRESHOLD):
+    """
+    Remove only noise components.  Keep all valid wall structures.
+
+    A component is noise (and removed) ONLY if:
+        - It has fewer than 2 nodes, OR
+        - Its total edge length is below noise_threshold.
+
+    All other components are preserved, even if disconnected.
+    This avoids destroying valid interior walls that don't
+    connect to the outer boundary.
+    """
+    # Build adjacency
     adj = defaultdict(set)
     for e in edges:
         adj[e["start_node"]].add(e["end_node"])
         adj[e["end_node"]].add(e["start_node"])
 
+    # Find connected components (BFS)
     visited = set()
     components = []
     for n in nodes:
@@ -317,33 +452,55 @@ def clean_graph(nodes, edges):
     components.sort(key=len, reverse=True)
     sizes = [len(c) for c in components]
 
-    if len(components) <= 1:
-        tag = "single component"
-        if edges and len(edges) >= len(nodes):
-            tag += ", has cycle"
-        print(f"Components: {len(components)}  ({tag})")
-        return nodes, edges
-
     top = str(sizes[:8])
     if len(sizes) > 8:
-        top = top[:-1] + ", ..."
-    pct = round(100 * sizes[0] / len(nodes)) if nodes else 0
-    print(f"Components: {len(components)}  sizes={top}"
-          f"  largest={sizes[0]} ({pct}%)")
+        top = top[:-1] + ", ...]"
+    print(f"Components: {len(components)}  sizes={top}")
 
-    # Keep largest
-    keep = components[0]
+    if len(components) <= 1:
+        if edges and len(edges) >= len(nodes):
+            print("  single component, has cycle")
+        return nodes, edges
+
+    # Decide which components to keep
+    keep_ids = set()       # set of all node IDs to keep
+    kept_count = 0
+    noise_count = 0
+
+    for comp in components:
+        # Compute total edge length for this component
+        comp_edge_len = sum(
+            e["length_px"] for e in edges
+            if e["start_node"] in comp and e["end_node"] in comp
+        )
+
+        is_noise = (len(comp) < 2) or (comp_edge_len < noise_threshold)
+
+        if is_noise:
+            noise_count += 1
+        else:
+            kept_count += 1
+            keep_ids.update(comp)
+
+    print(f"  Kept {kept_count} components, removed {noise_count} noise")
+
+    if not keep_ids:
+        # Edge case: everything was noise.  Fall back to keeping largest.
+        print("  WARNING: all components below threshold, keeping largest")
+        keep_ids = components[0]
+
+    # Rebuild with contiguous IDs
     old_to_new = {}
     new_nodes = []
     for n in nodes:
-        if n["id"] in keep:
+        if n["id"] in keep_ids:
             new_id = len(new_nodes)
             old_to_new[n["id"]] = new_id
             new_nodes.append({"id": new_id, "x": n["x"], "y": n["y"]})
 
     new_edges = []
     for e in edges:
-        if e["start_node"] in keep and e["end_node"] in keep:
+        if e["start_node"] in keep_ids and e["end_node"] in keep_ids:
             new_edges.append({
                 "start_node": old_to_new[e["start_node"]],
                 "end_node":   old_to_new[e["end_node"]],
@@ -353,7 +510,7 @@ def clean_graph(nodes, edges):
     dropped_n = len(nodes) - len(new_nodes)
     dropped_e = len(edges) - len(new_edges)
     if dropped_n:
-        print(f"Pruned {dropped_n} nodes, {dropped_e} edges from fragments")
+        print(f"  Pruned {dropped_n} noise nodes, {dropped_e} noise edges")
 
     return new_nodes, new_edges
 
@@ -376,8 +533,9 @@ def report(nodes, edges):
     pairs = [(e["start_node"], e["end_node"]) for e in edges]
     dupes = len(pairs) - len(set(pairs))
     zl = sum(1 for e in edges if e["length_px"] < 0.5)
-    print(f"Dup edges: {dupes}  Zero-len: {zl}"
-          f"  {'[PASS]' if dupes == 0 and zl == 0 else '[FAIL]'}")
+    short = sum(1 for e in edges if e["length_px"] < MIN_EDGE_LEN)
+    print(f"Dup edges: {dupes}  Zero-len: {zl}  Short(<{MIN_EDGE_LEN}px): {short}"
+          f"  {'[PASS]' if dupes == 0 and zl == 0 and short == 0 else '[FAIL]'}")
 
 
 # =============================================================================
@@ -402,34 +560,36 @@ def save_graph(nodes, edges, path=None):
     print(f"Saved -> {path}")
 
 
-def visualize(nodes, edges, img_shape, save_dir=None, suffix=""):
+def visualize(nodes, edges, img_shape, save_dir=None):
+    """Single visualization: final graph overlaid on wall mask (or black bg)."""
     if save_dir is None:
         save_dir = os.path.join("data", "intermediate")
     h, w = img_shape[:2]
     nmap = {n["id"]: (n["x"], n["y"]) for n in nodes}
 
-    def _draw(bg, tag, path):
-        for e in edges:
-            cv2.line(bg, nmap[e["start_node"]], nmap[e["end_node"]],
-                     (0, 255, 0), 2)
-        for n in nodes:
-            cv2.circle(bg, (n["x"], n["y"]), 5, (0, 0, 255), -1)
-            cv2.putText(bg, str(n["id"]), (n["x"] + 6, n["y"] - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
-        cv2.imwrite(path, bg)
-        print(f"{tag} -> {path}")
-
-    _draw(np.zeros((h, w, 3), np.uint8), "Overlay",
-          os.path.join(save_dir, f"wall_graph_overlay{suffix}.png"))
-
+    # Try wall mask as background; fall back to black
     mp = os.path.join("data", "intermediate", "binary_wall_mask.png")
     if os.path.exists(mp):
         mask = cv2.imread(mp, cv2.IMREAD_GRAYSCALE)
         if mask is not None:
             bg = cv2.cvtColor((mask * 0.35).astype(np.uint8),
                               cv2.COLOR_GRAY2BGR)
-            _draw(bg, "Mask overlay",
-                  os.path.join(save_dir, f"wall_graph_on_mask{suffix}.png"))
+        else:
+            bg = np.zeros((h, w, 3), np.uint8)
+    else:
+        bg = np.zeros((h, w, 3), np.uint8)
+
+    for e in edges:
+        cv2.line(bg, nmap[e["start_node"]], nmap[e["end_node"]],
+                 (0, 255, 0), 2)
+    for n in nodes:
+        cv2.circle(bg, (n["x"], n["y"]), 5, (0, 0, 255), -1)
+        cv2.putText(bg, str(n["id"]), (n["x"] + 6, n["y"] - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+
+    out_path = os.path.join(save_dir, "wall_graph.png")
+    cv2.imwrite(out_path, bg)
+    print(f"Visualization -> {out_path}")
 
 
 # =============================================================================
@@ -438,14 +598,15 @@ def visualize(nodes, edges, img_shape, save_dir=None, suffix=""):
 
 def main():
     print("=" * 55)
-    print("  Stage 3: Wall Graph Construction")
+    print("  Stage 3: Wall Graph Construction (Axis-Normalized)")
     print("=" * 55)
     print()
 
     img_shape = get_image_dimensions()
     print(f"Image: {img_shape[1]}x{img_shape[0]}")
-    print(f"Tolerances:  cluster={NODE_CLUSTER_TOL}px"
-          f"  axis={SPLIT_AXIS_TOL}px  min_edge={MIN_EDGE_LEN}px")
+    print(f"Tolerances:  axis_snap={AXIS_SNAP_TOL}px"
+          f"  cluster={NODE_CLUSTER_TOL}px"
+          f"  min_edge={MIN_EDGE_LEN}px")
     print()
 
     path = sys.argv[1] if len(sys.argv) >= 2 else None
@@ -453,30 +614,30 @@ def main():
     # 1. Load
     segments = load_segments(path)
 
-    # 2. Strict perpendicular intersections
-    intersections = detect_intersections(segments)
+    # 2. Normalize axis coordinates (snap near-identical X/Y)
+    segments = normalize_axis_coordinates(segments, AXIS_SNAP_TOL)
 
-    # 3. Collect all candidate nodes
+    # 3. Strict perpendicular intersections (with segment-index tracking)
+    intersections, seg_intersections = detect_intersections(segments)
+
+    # 4. Collect all candidate nodes
     candidates = collect_candidates(segments, intersections)
     print(f"Candidate points: {len(candidates)}")
 
-    # 4. Cluster nearby nodes
+    # 5. Cluster nearby nodes
     mapping, node_positions = cluster_nodes(candidates, NODE_CLUSTER_TOL)
 
-    # 5. Split segments at on-segment nodes
+    # 6. Split segments (strict membership: endpoints + own intersections)
     sub_edges = split_segments(segments, node_positions, mapping,
-                               SPLIT_AXIS_TOL)
+                               seg_intersections)
 
-    # 6. Build graph
+    # 7. Build graph
     nodes, edges = build_graph(sub_edges, node_positions)
 
-    # 6b. Pre-cleanup visualization
-    visualize(nodes, edges, img_shape, suffix="_all")
-
-    # 7. Keep largest component
+    # 8. Keep largest component
     nodes, edges = clean_graph(nodes, edges)
 
-    # 8. Report, save, visualize
+    # 9. Report, save, visualize
     print()
     report(nodes, edges)
     save_graph(nodes, edges)
