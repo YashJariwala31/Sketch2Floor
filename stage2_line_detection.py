@@ -144,8 +144,8 @@ def detect_raw_lines(edges, max_dim):
     rho = 1
     theta = math.pi / 180.0
     threshold = max(30, int(0.02 * max_dim))
-    min_line_len = max(10, int(0.08 * max_dim))    # 8% of max_dim per spec
-    max_line_gap = max(3, int(0.01 * max_dim))      # 1% of max_dim per spec
+    min_line_len = max(10, int(0.04 * max_dim))    # 4% of max_dim per spec
+    max_line_gap = max(5, int(0.02 * max_dim))      # 2% of max_dim per spec
 
     lines = cv2.HoughLinesP(
         edges, rho, theta, threshold,
@@ -401,8 +401,8 @@ def snap_endpoints(merged, snap_radius=8):
 # ---------------------------------------------------------------------------
 
 def remove_short_segments(merged, max_dim):
-    """Remove segments shorter than 8% of max image dimension."""
-    min_len = max(10, int(0.08 * max_dim))
+    """Remove segments shorter than 5% of max image dimension."""
+    min_len = max(10, int(0.05 * max_dim))
     kept = []
     removed = 0
     for (x1, y1, x2, y2, ori) in merged:
@@ -539,8 +539,8 @@ def main():
 
     # 6. Collinear grouping + interval merging
     #    Scale tolerances with image size for hand-drawn sketches
-    band_distance = max(10, int(0.025 * max_dim))   # ~50px at 2000px
-    gap_tolerance = max(12, int(0.02 * max_dim))     # ~40px at 2000px
+    band_distance = max(10, int(0.035 * max_dim))   # ~70px at 2000px
+    gap_tolerance = max(12, int(0.03 * max_dim))     # ~60px at 2000px
     merged = group_and_merge(filtered, gap_tolerance, band_distance,
                              thick_edges.shape)
     print(f"After grouping & merging: {len(merged)}"
