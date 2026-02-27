@@ -96,7 +96,7 @@ def detect_boundary_segments(binary, min_seg_len):
     # Largest external contour = outer boundary
     outer = max(contours, key=cv2.contourArea)
     peri = cv2.arcLength(outer, True)
-    approx = cv2.approxPolyDP(outer, 0.03 * peri, True)
+    approx = cv2.approxPolyDP(outer, 0.003 * peri, True)
     pts = [tuple(pt[0]) for pt in approx]
 
     boundary_segs = []
@@ -211,13 +211,14 @@ def filter_by_binary_overlap(filtered, binary, min_overlap_ratio=0.5,
 # Step 5: Collinear grouping + interval merging
 # ---------------------------------------------------------------------------
 
-def group_and_merge(filtered, gap_tolerance, band_distance, img_shape):
+def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
     """
     Group co-linear segments (same axis within band_distance), then merge
     overlapping or near-touching intervals using gap_tolerance.
     """
     h, w = img_shape[:2]
     max_dim = max(h, w)
+    h_bin, w_bin = binary.shape[:2] if binary is not None else (h, w)
 
     horiz = [(x1, y1, x2, y2, L)
              for (x1, y1, x2, y2, ori, L) in filtered if ori == "horizontal"]
@@ -264,6 +265,11 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape):
             cur_s, cur_e = intervals[0]
             for xa, xb in intervals[1:]:
                 if xa <= cur_e + gap_tolerance:
+                    gap_size = xa - cur_e
+                    if gap_size > int(0.015 * max_dim):
+                        merged_intervals.append((cur_s, cur_e))
+                        cur_s, cur_e = xa, xb
+                        continue
                     cur_e = max(cur_e, xb)
                 else:
                     merged_intervals.append((cur_s, cur_e))
@@ -306,11 +312,32 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape):
             x_snap = int(round(float(np.median(x_vals))))
             intervals = sorted([(ya, yb) for (_, ya, yb) in g])
 
+            # Normal merging for internal walls
             merged_intervals = []
             cur_s, cur_e = intervals[0]
             for ya, yb in intervals[1:]:
                 if ya <= cur_e + gap_tolerance:
-                    cur_e = max(cur_e, yb)
+                    # Check binary mask continuity in the gap region
+                    can_merge = True
+                    if binary is not None and ya > cur_e:
+                        gap_region = binary[int(cur_e):int(ya), int(x_snap)]
+                        if gap_region.size > 0:
+                            black_runs = 0
+                            max_black_run = 0
+                            for px in gap_region:
+                                if px == 0:
+                                    black_runs += 1
+                                    max_black_run = max(max_black_run, black_runs)
+                                else:
+                                    black_runs = 0
+                            if max_black_run > int(0.02 * max_dim):
+                                can_merge = False
+
+                    if can_merge:
+                        cur_e = max(cur_e, yb)
+                    else:
+                        merged_intervals.append((cur_s, cur_e))
+                        cur_s, cur_e = ya, yb
                 else:
                     merged_intervals.append((cur_s, cur_e))
                     cur_s, cur_e = ya, yb
@@ -526,23 +553,25 @@ def main():
 
     # 5. Binary overlap validation
     filtered = filter_by_binary_overlap(filtered, binary,
-                                         min_overlap_ratio=0.5,
-                                         min_overlap_pixels=30)
+                                         min_overlap_ratio=0.7,
+                                         min_overlap_pixels=50)
     print(f"After binary-overlap validation: {len(filtered)}")
 
-    # 5b. Inject contour-based boundary segments (no validation needed -
-    #     they come from the mask contour itself)
-    boundary = detect_boundary_segments(binary, min_line_len)
-    if boundary:
-        filtered.extend(boundary)
-        print(f"Injected {len(boundary)} boundary segment(s)")
+    band_distance = max(10, int(0.035 * max_dim))
+    gap_tolerance = max(12, int(0.03 * max_dim))
 
-    # 6. Collinear grouping + interval merging
-    #    Scale tolerances with image size for hand-drawn sketches
-    band_distance = max(10, int(0.035 * max_dim))   # ~70px at 2000px
-    gap_tolerance = max(12, int(0.03 * max_dim))     # ~60px at 2000px
+    # 5b. Inject contour-based boundary segments (horizontal only)
+    boundary = detect_boundary_segments(binary, min_line_len)
+
+    if boundary:
+        injected = 0
+        for bx1, by1, bx2, by2, ori, L in boundary:
+            if ori == 'horizontal':
+                filtered.append((bx1, by1, bx2, by2, ori, L))
+                injected += 1
+        print(f"Injected {injected} horizontal boundary segment(s)")
     merged = group_and_merge(filtered, gap_tolerance, band_distance,
-                             thick_edges.shape)
+                             thick_edges.shape, binary)
     print(f"After grouping & merging: {len(merged)}"
           f"  (band={band_distance}, gap={gap_tolerance})")
 
@@ -555,7 +584,7 @@ def main():
     merged2 = group_and_merge(
         [(x1, y1, x2, y2, ori, compute_length(x1, y1, x2, y2))
          for (x1, y1, x2, y2, ori) in merged],
-        gap_tolerance, band_distance, thick_edges.shape)
+        gap_tolerance, band_distance, thick_edges.shape, binary)
     if len(merged2) < len(merged):
         print(f"After 2nd merge pass: {len(merged2)}")
         merged = merged2
