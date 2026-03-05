@@ -317,27 +317,7 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
             cur_s, cur_e = intervals[0]
             for ya, yb in intervals[1:]:
                 if ya <= cur_e + gap_tolerance:
-                    # Check binary mask continuity in the gap region
-                    can_merge = True
-                    if binary is not None and ya > cur_e:
-                        gap_region = binary[int(cur_e):int(ya), int(x_snap)]
-                        if gap_region.size > 0:
-                            black_runs = 0
-                            max_black_run = 0
-                            for px in gap_region:
-                                if px == 0:
-                                    black_runs += 1
-                                    max_black_run = max(max_black_run, black_runs)
-                                else:
-                                    black_runs = 0
-                            if max_black_run > int(0.02 * max_dim):
-                                can_merge = False
-
-                    if can_merge:
-                        cur_e = max(cur_e, yb)
-                    else:
-                        merged_intervals.append((cur_s, cur_e))
-                        cur_s, cur_e = ya, yb
+                    cur_e = max(cur_e, yb)
                 else:
                     merged_intervals.append((cur_s, cur_e))
                     cur_s, cur_e = ya, yb
@@ -558,7 +538,7 @@ def main():
     print(f"After binary-overlap validation: {len(filtered)}")
 
     band_distance = max(10, int(0.035 * max_dim))
-    gap_tolerance = max(12, int(0.03 * max_dim))
+    gap_tolerance = max(12, int(0.08 * max_dim))
 
     # 5b. Inject contour-based boundary segments (horizontal only)
     boundary = detect_boundary_segments(binary, min_line_len)

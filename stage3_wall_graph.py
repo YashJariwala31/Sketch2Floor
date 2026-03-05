@@ -15,21 +15,25 @@
 #   - No artificial nodes or connections.
 #
 # Tolerances:
-#   AXIS_SNAP:    10px – snap near-identical axis coordinates
-#   INTERSECTION:  0   – strict containment, no range expansion
-#   NODE_CLUSTER:  3px – Euclidean merge for coincident points
-#   MIN_EDGE:     20px – discard short sub-segments
-#   NOISE_THRESH: 50px – remove components with total edge length below this
+#   AXIS_SNAP:       3px – snap near-identical axis coordinates (tight)
+#   COLLINEAR_GAP:   5px – merge collinear segments with gap <= this
+#   CORNER_EXTEND:  80px – extend endpoints to reach nearby perpendiculars
+#   INTERSECTION:    0   – strict containment, no range expansion
+#   NODE_CLUSTER:    2px – Euclidean merge for coincident points (tight)
+#   MIN_EDGE:       20px – discard short sub-segments
+#   NOISE_THRESH:   50px – remove components with total edge length below this
 #
 # Pipeline:
-#   1. load_segments
-#   2. normalize_axis_coordinates  (snap X of V segs, Y of H segs)
-#   3. detect_intersections        (strict H×V, track segment indices)
-#   4. collect candidate nodes     (endpoints + intersections only)
-#   5. cluster_nodes               (merge within 3px Euclidean)
-#   6. split_segments              (strict membership only)
-#   7. build_graph                 (deduplicated, no zero-length)
-#   8. clean_graph                 (remove noise components only)
+#   1.   load_segments
+#   2.   normalize_axis_coordinates  (snap X of V segs, Y of H segs)
+#   2.5  merge_collinear_segments    (fuse coaxial segments within gap tol)
+#   2.75 extend_to_corners           (extend endpoints to nearby perpendiculars)
+#   3.   detect_intersections        (strict H×V, track segment indices)
+#   4.   collect candidate nodes     (endpoints + intersections only)
+#   5.   cluster_nodes               (merge within 2px Euclidean)
+#   6.   split_segments              (strict membership only)
+#   7.   build_graph                 (deduplicated, no zero-length)
+#   8.   clean_graph                 (remove noise components only)
 
 import sys
 import os
@@ -40,10 +44,12 @@ import cv2
 from collections import defaultdict
 
 # -- Tolerances ---------------------------------------------------------------
-AXIS_SNAP_TOL = 10     # Snap near-identical axis coordinates
-NODE_CLUSTER_TOL = 3   # Euclidean distance for merging coincident points
-MIN_EDGE_LEN = 20      # Discard sub-segments shorter than this
-NOISE_THRESHOLD = 50   # Remove components with total edge length below this
+AXIS_SNAP_TOL = 5           # Snap near-identical axis coordinates (tight)
+COLLINEAR_GAP_TOL = 5      # Merge collinear segments whose gap <= this
+CORNER_EXTEND_TOL = 80     # Extend endpoints to reach nearby perpendiculars
+NODE_CLUSTER_TOL = 2        # Euclidean distance for merging coincident points (tight)
+MIN_EDGE_LEN = 20           # Discard sub-segments shorter than this
+NOISE_THRESHOLD = 50        # Remove components with total edge length below this
 
 
 # =============================================================================
@@ -186,6 +192,179 @@ def normalize_axis_coordinates(segments, tol=AXIS_SNAP_TOL):
     y_clusters = len(set(y_map.values())) if y_map else 0
     print(f"Axis normalization:  X clusters={x_clusters}  Y clusters={y_clusters}"
           f"  (tol={tol}px)")
+    return out
+
+
+# =============================================================================
+# 2.5  Merge collinear segments (pre-graph)
+# =============================================================================
+
+def merge_collinear_segments(segments, gap_tol=COLLINEAR_GAP_TOL):
+    """
+    Merge collinear segments that share the same snapped axis coordinate
+    and whose ranges overlap or have a gap <= gap_tol.
+
+    For horizontal segments:  group by Y, merge overlapping / nearby X-ranges.
+    For vertical   segments:  group by X, merge overlapping / nearby Y-ranges.
+
+    This turns fragmented wall pieces (multiple short segments along the
+    same line) into single continuous segments, so the downstream graph
+    sees a clean perimeter instead of a chain of tiny edges.
+    """
+    # -- Group segments by (orientation, axis_value) -------------------------
+    h_groups = defaultdict(list)   # y -> list of (x_min, x_max)
+    v_groups = defaultdict(list)   # x -> list of (y_min, y_max)
+
+    for s in segments:
+        if s["orientation"] == "horizontal":
+            y = s["start"][1]
+            x_min = min(s["start"][0], s["end"][0])
+            x_max = max(s["start"][0], s["end"][0])
+            h_groups[y].append((x_min, x_max))
+        else:
+            x = s["start"][0]
+            y_min = min(s["start"][1], s["end"][1])
+            y_max = max(s["start"][1], s["end"][1])
+            v_groups[x].append((y_min, y_max))
+
+    # -- Interval merge helper ----------------------------------------------
+    def _merge_intervals(intervals, tol):
+        """
+        Merge a list of (lo, hi) intervals.  Two intervals are merged if
+        they overlap OR the gap between them is <= tol.
+        Returns a sorted list of merged (lo, hi) tuples.
+        """
+        if not intervals:
+            return []
+        intervals = sorted(intervals)
+        merged = [intervals[0]]
+        for lo, hi in intervals[1:]:
+            prev_lo, prev_hi = merged[-1]
+            if lo <= prev_hi + tol:          # overlap or within gap tolerance
+                merged[-1] = (prev_lo, max(prev_hi, hi))
+            else:
+                merged.append((lo, hi))
+        return merged
+
+    # -- Rebuild segments from merged intervals -----------------------------
+    out = []
+
+    for y, intervals in sorted(h_groups.items()):
+        for x_min, x_max in _merge_intervals(intervals, gap_tol):
+            out.append({
+                "start": (x_min, y), "end": (x_max, y),
+                "orientation": "horizontal",
+            })
+
+    total_h_before = sum(len(v) for v in h_groups.values())
+    total_h_after  = sum(1 for s in out if s["orientation"] == "horizontal")
+
+    for x, intervals in sorted(v_groups.items()):
+        for y_min, y_max in _merge_intervals(intervals, gap_tol):
+            out.append({
+                "start": (x, y_min), "end": (x, y_max),
+                "orientation": "vertical",
+            })
+
+    total_v_before = sum(len(v) for v in v_groups.values())
+    total_v_after  = sum(1 for s in out if s["orientation"] == "vertical")
+
+    h_fused = total_h_before - total_h_after
+    v_fused = total_v_before - total_v_after
+    print(f"Collinear merge:  {total_h_before + total_v_before} -> {len(out)} segments"
+          f"  (H: {total_h_before}->{total_h_after}, fused {h_fused}"
+          f"  |  V: {total_v_before}->{total_v_after}, fused {v_fused})"
+          f"  (gap_tol={gap_tol}px)")
+    return out
+
+
+# =============================================================================
+# 2.75  Extend segment endpoints to meet at corners
+# =============================================================================
+
+def extend_to_corners(segments, ext_tol=CORNER_EXTEND_TOL):
+    """
+    Extend H/V segment endpoints so they meet at corners.
+
+    Hand-drawn walls often end *before* reaching the perpendicular wall,
+    leaving a gap of 50–100px at corners.  Strict intersection detection
+    then finds nothing and the graph is fully disconnected.
+
+    For every (H, V) pair, compute the theoretical intersection (vx, hy).
+    If vx is within ext_tol of H's x-range AND hy is within ext_tol of
+    V's y-range, extend both segments to include that intersection:
+        - H's x-range grows to include vx
+        - V's y-range grows to include hy
+
+    Only *near-miss* corners are fixed; segments hundreds of pixels apart
+    are left alone.
+    """
+    # Work on mutable copies: store as [x_min, x_max, y] for H,
+    #                                   [x, y_min, y_max] for V
+    h_segs = []  # (index_in_output, [x_min, x_max, y])
+    v_segs = []  # (index_in_output, [x, y_min, y_max])
+
+    for i, s in enumerate(segments):
+        if s["orientation"] == "horizontal":
+            h_segs.append((i, [s["start"][0], s["end"][0], s["start"][1]]))
+        else:
+            v_segs.append((i, [s["start"][0], s["start"][1], s["end"][1]]))
+
+    extensions = 0
+
+    for _hi, h in h_segs:
+        hx1, hx2, hy = h
+        for _vi, v in v_segs:
+            vx, vy1, vy2 = v
+
+            # How far is vx from H's x-range?
+            if vx < hx1:
+                h_gap = hx1 - vx
+            elif vx > hx2:
+                h_gap = vx - hx2
+            else:
+                h_gap = 0  # already within range
+
+            # How far is hy from V's y-range?
+            if hy < vy1:
+                v_gap = vy1 - hy
+            elif hy > vy2:
+                v_gap = hy - vy2
+            else:
+                v_gap = 0  # already within range
+
+            # Both must be within tolerance to prevent long jumps
+            if h_gap <= ext_tol and v_gap <= ext_tol and (h_gap > 0 or v_gap > 0):
+                # Extend H to include vx
+                if vx < h[0]:
+                    h[0] = vx
+                elif vx > h[1]:
+                    h[1] = vx
+
+                # Extend V to include hy
+                if hy < v[1]:
+                    v[1] = hy
+                elif hy > v[2]:
+                    v[2] = hy
+
+                extensions += 1
+
+    # Rebuild segment list
+    out = list(segments)  # shallow copy of dicts
+    out = [dict(s) for s in out]  # deep copy each dict
+
+    for _hi, h in h_segs:
+        out[_hi] = {
+            "start": (h[0], h[2]), "end": (h[1], h[2]),
+            "orientation": "horizontal",
+        }
+    for _vi, v in v_segs:
+        out[_vi] = {
+            "start": (v[0], v[1]), "end": (v[0], v[2]),
+            "orientation": "vertical",
+        }
+
+    print(f"Corner extension:  {extensions} extensions applied  (ext_tol={ext_tol}px)")
     return out
 
 
@@ -616,6 +795,12 @@ def main():
 
     # 2. Normalize axis coordinates (snap near-identical X/Y)
     segments = normalize_axis_coordinates(segments, AXIS_SNAP_TOL)
+
+    # 2.5 Merge collinear segments (fuse coaxial within gap tolerance)
+    segments = merge_collinear_segments(segments, COLLINEAR_GAP_TOL)
+
+    # 2.75 Extend endpoints to meet at nearby perpendicular segments
+    segments = extend_to_corners(segments, CORNER_EXTEND_TOL)
 
     # 3. Strict perpendicular intersections (with segment-index tracking)
     intersections, seg_intersections = detect_intersections(segments)
