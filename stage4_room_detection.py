@@ -2,20 +2,19 @@
 #
 # Stage 4 – Room Detection from Wall Graph
 #
-# Detect enclosed rooms by finding closed cycles in the wall graph
-# and converting them into polygon regions.
+# Detect enclosed rooms by finding rectangular regions bounded by
+# perpendicular wall segments.
 #
 # Input:  data/intermediate/wall_graph.json (from Stage 3)
 # Output: data/intermediate/room_polygons.json
 #         data/intermediate/room_detection_overlay.png
 #
 # Algorithm:
-#   1. Build adjacency list from edges
-#   2. Find simple closed cycles using DFS with path tracking
-#   3. Normalize cycles to remove duplicates
-#   4. Convert cycles to polygons using node coordinates
-#   5. Compute polygon area using shoelace formula
-#   6. Filter rooms by area (reject noise and outer boundary)
+#   1. Extract horizontal and vertical wall segments from graph edges
+#   2. Find corner candidates where H and V walls share endpoints
+#   3. Identify potential rectangles from corner pairs
+#   4. Validate rectangles have enclosing walls on all sides
+#   5. Filter rooms by area (reject noise and outer boundary)
 
 import sys
 import os
@@ -27,8 +26,8 @@ from collections import defaultdict
 
 
 # -- Tolerances ---------------------------------------------------------------
-MIN_CYCLE_NODES = 4       # Minimum nodes for a valid room cycle
 MIN_ROOM_AREA = 2000      # Minimum area in px² (reject noise regions)
+WALL_GAP_TOL = 50         # Max gap for walls to be considered connected
 
 
 # =============================================================================
@@ -54,138 +53,169 @@ def load_wall_graph(json_path=None):
 
 
 # =============================================================================
-# 2. Build adjacency list
+# 2. Extract wall segments from edges
 # =============================================================================
 
-def build_adjacency(edges):
+def extract_wall_segments(edges, node_coords):
     """
-    Create adjacency list from edges.
-    Each node maps to a list of its neighbors.
+    Categorize edges as horizontal or vertical segments.
+    
+    Returns:
+        h_walls: list of (y, x_min, x_max) for horizontal walls
+        v_walls: list of (x, y_min, y_max) for vertical walls
     """
-    adj = defaultdict(set)
+    h_walls = []  # (y, x_min, x_max)
+    v_walls = []  # (x, y_min, y_max)
+    
     for e in edges:
-        a, b = e["start_node"], e["end_node"]
-        adj[a].add(b)
-        adj[b].add(a)
-    
-    return adj
-
-
-# =============================================================================
-# 3. Find cycles using DFS
-# =============================================================================
-
-def find_all_cycles(adj, min_nodes=MIN_CYCLE_NODES):
-    """
-    Find all simple closed cycles in the graph using DFS with path tracking.
-    
-    A cycle is found when we revisit a node that's already in our current path.
-    We extract the cycle from the path and store it.
-    
-    Returns list of cycles, where each cycle is a list of node IDs.
-    """
-    all_cycles = []
-    visited_global = set()
-    
-    def dfs(start, current, path, visited_in_path):
-        """
-        DFS from 'start' node, tracking the current path.
+        n1, n2 = e["start_node"], e["end_node"]
+        x1, y1 = node_coords[n1]
+        x2, y2 = node_coords[n2]
         
-        When we encounter a node already in our path, we've found a cycle.
-        Extract the cycle from the path.
-        """
-        for neighbor in adj[current]:
-            if neighbor == start and len(path) >= min_nodes:
-                # Found a cycle back to start
-                cycle = path[:]  # copy current path
-                all_cycles.append(cycle)
-            elif neighbor not in visited_in_path:
-                # Continue DFS
-                visited_in_path.add(neighbor)
-                path.append(neighbor)
-                dfs(start, neighbor, path, visited_in_path)
-                path.pop()
-                visited_in_path.remove(neighbor)
+        if abs(y1 - y2) < 5:  # Horizontal (same Y)
+            y = y1
+            x_min, x_max = min(x1, x2), max(x1, x2)
+            h_walls.append((y, x_min, x_max))
+        elif abs(x1 - x2) < 5:  # Vertical (same X)
+            x = x1
+            y_min, y_max = min(y1, y2), max(y1, y2)
+            v_walls.append((x, y_min, y_max))
     
-    # Start DFS from each unvisited node
-    for start_node in adj.keys():
-        if start_node not in visited_global:
-            dfs(start_node, start_node, [start_node], {start_node})
-            visited_global.add(start_node)
-    
-    print(f"DFS found {len(all_cycles)} raw cycles")
-    return all_cycles
+    print(f"Wall segments: {len(h_walls)} horizontal, {len(v_walls)} vertical")
+    return h_walls, v_walls
 
 
 # =============================================================================
-# 4. Normalize cycles to remove duplicates
+# 3. Find corner points (H/V intersections)
 # =============================================================================
 
-def normalize_cycle(cycle):
+def find_corners(h_walls, v_walls):
     """
-    Normalize a cycle for deduplication.
+    Find corner points where horizontal and vertical walls intersect.
     
-    1. Rotate cycle so minimum node ID is first
-    2. Choose direction (forward/reverse) that gives smaller second element
+    A corner exists where:
+        - A vertical wall's x is within a horizontal wall's x-range
+        - A horizontal wall's y is within a vertical wall's y-range
     
-    This ensures the same cycle is always represented identically
-    regardless of starting point or traversal direction.
+    Returns list of (x, y) corner coordinates.
     """
-    if not cycle:
-        return tuple()
+    corners = set()
     
-    n = len(cycle)
+    for hy, hx1, hx2 in h_walls:
+        for vx, vy1, vy2 in v_walls:
+            # Check if V's x is within H's x-range
+            if hx1 <= vx <= hx2:
+                # Check if H's y is within V's y-range
+                if vy1 <= hy <= vy2:
+                    corners.add((vx, hy))
     
-    # Find position of minimum node ID
-    min_node = min(cycle)
-    min_idx = cycle.index(min_node)
-    
-    # Rotate so min_node is first
-    rotated = cycle[min_idx:] + cycle[:min_idx]
-    
-    # Choose direction: compare second element in both directions
-    if n > 1:
-        forward_second = rotated[1]
-        reverse_second = rotated[-1]  # second element if reversed
-        
-        if reverse_second < forward_second:
-            # Reverse direction is "smaller", use it
-            rotated = [rotated[0]] + list(reversed(rotated[1:]))
-    
-    return tuple(rotated)
+    print(f"Found {len(corners)} corner points")
+    return list(corners)
 
 
-def deduplicate_cycles(cycles):
+# =============================================================================
+# 4. Detect rooms from binary wall mask (contour-based)
+# =============================================================================
+
+def detect_rooms_from_mask(binary_path=None, min_area=MIN_ROOM_AREA):
     """
-    Remove duplicate cycles by normalizing each cycle and using a set.
+    Detect enclosed rooms by finding empty regions surrounded by walls.
+    
+    Rooms are the BACKGROUND regions enclosed by walls, not holes in walls.
+    We flood-fill from the image edges to mark exterior, then find remaining
+    enclosed white regions.
+    
+    Returns list of (x1, y1, x2, y2, area, contour) tuples.
     """
-    seen = set()
+    if binary_path is None:
+        binary_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
+    
+    if not os.path.exists(binary_path):
+        print(f"Binary wall mask not found at {binary_path}")
+        return [], (720, 1024)
+    
+    # Load binary mask (walls are white/255, background is black/0)
+    mask = cv2.imread(binary_path, cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        print("Failed to load binary wall mask")
+        return [], (720, 1024)
+    
+    h, w = mask.shape
+    print(f"Binary mask: {w}x{h}")
+    
+    # Close small gaps in walls to prevent flood-fill leakage
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    closed_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    
+    # Create a mask for flood filling - need 2 pixels larger
+    flood_mask = np.zeros((h + 2, w + 2), np.uint8)
+    
+    # Invert: walls become 0 (barriers), background becomes 255 (fillable)
+    inverted = cv2.bitwise_not(closed_mask)
+    
+    # Flood fill from all four corners to mark exterior regions
+    # Use 128 as the fill value to distinguish from rooms (255)
+    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    
+    for cx, cy in corners:
+        if inverted[cy, cx] == 255:
+            cv2.floodFill(inverted, flood_mask, (cx, cy), 128)
+    
+    # Now: 128 = exterior (connected to edges), 255 = enclosed rooms, 0 = walls
+    room_mask = (inverted == 255).astype(np.uint8) * 255
+    
+    # Debug: count pixels
+    exterior_px = np.count_nonzero(inverted == 128)
+    room_px = np.count_nonzero(room_mask)
+    wall_px = np.count_nonzero(closed_mask)
+    print(f"  Exterior: {exterior_px}px, Rooms: {room_px}px, Walls: {wall_px}px")
+    
+    # Find contours of enclosed regions
+    contours, _ = cv2.findContours(room_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    rooms = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area >= min_area:
+            x, y, bw, bh = cv2.boundingRect(contour)
+            rooms.append((x, y, x + bw, y + bh, area, contour))
+    
+    print(f"Detected {len(rooms)} enclosed regions from mask")
+    return rooms, (h, w)
+
+
+# =============================================================================
+# 5. Deduplicate and filter rectangles
+# =============================================================================
+
+def deduplicate_rectangles(rectangles):
+    """
+    Remove duplicate and nested rectangles.
+    Keep only the smallest rectangle at each location.
+    """
+    if not rectangles:
+        return []
+    
+    # Sort by area (ascending) - process smallest first
+    sorted_rects = sorted(rectangles, key=lambda r: (r[2]-r[0])*(r[3]-r[1]))
+    
     unique = []
+    for rect in sorted_rects:
+        rx1, ry1, rx2, ry2 = rect
+        is_duplicate = False
+        
+        for existing in unique:
+            ex1, ey1, ex2, ey2 = existing
+            # Check if rect is inside existing
+            if ex1 <= rx1 and ey1 <= ry1 and ex2 >= rx2 and ey2 >= ry2:
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            unique.append(rect)
     
-    for cycle in cycles:
-        normalized = normalize_cycle(cycle)
-        if normalized not in seen and len(normalized) >= MIN_CYCLE_NODES:
-            seen.add(normalized)
-            unique.append(list(normalized))
-    
-    print(f"After deduplication: {len(unique)} unique cycles")
+    print(f"After deduplication: {len(unique)} unique rectangles")
     return unique
-
-
-# =============================================================================
-# 5. Convert cycles to polygons
-# =============================================================================
-
-def cycle_to_polygon(cycle, node_coords):
-    """
-    Convert a cycle (list of node IDs) to a polygon (list of [x, y] coordinates).
-    """
-    polygon = []
-    for node_id in cycle:
-        if node_id in node_coords:
-            x, y = node_coords[node_id]
-            polygon.append([int(x), int(y)])
-    return polygon
 
 
 # =============================================================================
@@ -223,35 +253,25 @@ def filter_rooms(polygons_with_areas, min_area=MIN_ROOM_AREA):
     Filter rooms based on area criteria:
     
     1. Reject polygons smaller than min_area (noise regions)
-    2. Reject the largest polygon (outer boundary)
+    
+    Note: We do NOT remove the largest polygon because the flood-fill
+    already excluded the exterior. The remaining regions are all rooms.
     
     Returns filtered list of (polygon, area) tuples.
     """
     if not polygons_with_areas:
         return []
     
-    # Sort by area descending
-    sorted_rooms = sorted(polygons_with_areas, key=lambda x: x[1], reverse=True)
-    
     # Filter by minimum area
-    filtered = [(poly, area) for poly, area in sorted_rooms if area >= min_area]
+    filtered = [(poly, area) for poly, area in polygons_with_areas if area >= min_area]
     
-    if not filtered:
-        print(f"All rooms filtered out (min_area={min_area})")
-        return []
-    
-    # Remove the largest (outer boundary)
-    # The largest enclosed region is typically the outer boundary of the floor plan
-    rooms = filtered[1:] if len(filtered) > 1 else []
-    
-    removed_outer = len(filtered) - len(rooms)
     removed_small = len(polygons_with_areas) - len(filtered)
     
-    print(f"Filtered: {len(polygons_with_areas)} -> {len(rooms)} rooms")
-    print(f"  Removed {removed_small} small regions (< {min_area} px²)")
-    print(f"  Removed {removed_outer} outer boundary")
+    print(f"Filtered: {len(polygons_with_areas)} -> {len(filtered)} rooms")
+    if removed_small > 0:
+        print(f"  Removed {removed_small} small regions (< {min_area} px²)")
     
-    return rooms
+    return filtered
 
 
 # =============================================================================
@@ -379,46 +399,50 @@ def visualize(rooms, nodes, edges, node_coords, img_shape, save_dir=None):
 # Main
 # =============================================================================
 
+def rectangle_to_polygon(rect):
+    """Convert rectangle (x1, y1, x2, y2) to polygon vertices."""
+    x1, y1, x2, y2 = rect
+    return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+
+
 def main():
     print("=" * 55)
     print("  Stage 4: Room Detection from Wall Graph")
     print("=" * 55)
     print()
     
-    # 1. Load wall graph
+    # 1. Load wall graph (for visualization overlay)
     nodes, edges, node_coords = load_wall_graph()
     
-    # 2. Build adjacency list
-    adj = build_adjacency(edges)
-    print(f"Adjacency: {len(adj)} nodes with neighbors")
+    # 2. Detect rooms from binary wall mask (contour-based)
+    rooms_data, img_shape = detect_rooms_from_mask(min_area=MIN_ROOM_AREA)
     
-    # 3. Find all cycles
-    cycles = find_all_cycles(adj, MIN_CYCLE_NODES)
-    
-    # 4. Deduplicate cycles
-    unique_cycles = deduplicate_cycles(cycles)
-    
-    # 5. Convert cycles to polygons and compute areas
+    # 3. Convert to polygons and compute areas
     polygons_with_areas = []
-    for cycle in unique_cycles:
-        polygon = cycle_to_polygon(cycle, node_coords)
-        if len(polygon) >= 3:  # Valid polygon needs at least 3 vertices
-            area = compute_polygon_area(polygon)
-            polygons_with_areas.append((polygon, area))
+    for x1, y1, x2, y2, area, contour in rooms_data:
+        # Approximate contour to polygon
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+        polygon = [[int(pt[0][0]), int(pt[0][1])] for pt in approx]
+        
+        # Ensure polygon has at least 3 vertices
+        if len(polygon) >= 3:
+            # Recompute area from polygon
+            poly_area = compute_polygon_area(polygon)
+            polygons_with_areas.append((polygon, poly_area))
     
-    print(f"Converted {len(polygons_with_areas)} cycles to polygons")
+    print(f"Converted {len(polygons_with_areas)} contours to polygons")
     
-    # 6. Filter rooms
+    # 4. Filter rooms
     rooms = filter_rooms(polygons_with_areas, MIN_ROOM_AREA)
     
-    # 7. Build output
+    # 5. Build output
     output = build_output(rooms)
     
-    # 8. Save outputs
+    # 6. Save outputs
     save_outputs(output)
     
-    # 9. Visualize
-    img_shape = get_image_dimensions()
+    # 7. Visualize
     visualize(output, nodes, edges, node_coords, img_shape)
     
     # Summary
