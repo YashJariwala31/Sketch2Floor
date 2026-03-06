@@ -260,16 +260,12 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
             y_snap = int(round(float(np.median(y_vals))))
             intervals = sorted([(xa, xb) for (_, xa, xb) in g])
 
-            # Merge overlapping / near-touching intervals
+            # Merge overlapping / near-touching intervals with gap check
             merged_intervals = []
             cur_s, cur_e = intervals[0]
             for xa, xb in intervals[1:]:
-                if xa <= cur_e + gap_tolerance:
-                    gap_size = xa - cur_e
-                    if gap_size > int(0.015 * max_dim):
-                        merged_intervals.append((cur_s, cur_e))
-                        cur_s, cur_e = xa, xb
-                        continue
+                gap = xa - cur_e
+                if gap <= gap_tolerance:
                     cur_e = max(cur_e, xb)
                 else:
                     merged_intervals.append((cur_s, cur_e))
@@ -312,11 +308,12 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
             x_snap = int(round(float(np.median(x_vals))))
             intervals = sorted([(ya, yb) for (_, ya, yb) in g])
 
-            # Normal merging for internal walls
+            # Merge with gap check to preserve door openings
             merged_intervals = []
             cur_s, cur_e = intervals[0]
             for ya, yb in intervals[1:]:
-                if ya <= cur_e + gap_tolerance:
+                gap = ya - cur_e
+                if gap <= gap_tolerance:
                     cur_e = max(cur_e, yb)
                 else:
                     merged_intervals.append((cur_s, cur_e))
@@ -538,7 +535,7 @@ def main():
     print(f"After binary-overlap validation: {len(filtered)}")
 
     band_distance = max(10, int(0.035 * max_dim))
-    gap_tolerance = max(12, int(0.08 * max_dim))
+    gap_tolerance = max(6, int(0.02 * max_dim))
 
     # 5b. Inject contour-based boundary segments (horizontal only)
     boundary = detect_boundary_segments(binary, min_line_len)
