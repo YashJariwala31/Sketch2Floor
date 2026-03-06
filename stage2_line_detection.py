@@ -328,6 +328,81 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
 
 
 # ---------------------------------------------------------------------------
+# Step 6b: Force-merge boundary walls
+# ---------------------------------------------------------------------------
+
+def force_merge_boundary_walls(merged, img_shape):
+    """
+    Force-merge vertical segments near outer borders that span >60% of image height.
+    
+    This ensures left/right boundary walls become single continuous segments
+    while preserving door gaps in interior walls.
+    
+    Only merges segments where x < 0.1 * width OR x > 0.9 * width.
+    """
+    h, w = img_shape[:2]
+    threshold_height = h * 0.6
+    left_border = w * 0.1   # 10% from left
+    right_border = w * 0.9  # 10% from right
+    
+    # Group vertical segments by x-coordinate
+    vertical = [(x1, y1, x2, y2) for (x1, y1, x2, y2, ori) in merged if ori == "vertical"]
+    horizontal = [(x1, y1, x2, y2, ori) for (x1, y1, x2, y2, ori) in merged if ori == "horizontal"]
+    
+    if not vertical:
+        return merged
+    
+    # Group verticals by x-coordinate (within tolerance)
+    x_groups = defaultdict(list)
+    x_tolerance = 15  # pixels
+    
+    for x1, y1, x2, y2 in vertical:
+        x = x1  # x1 == x2 for vertical
+        # Find existing group or start new one
+        found = False
+        for group_x in x_groups:
+            if abs(x - group_x) <= x_tolerance:
+                x_groups[group_x].append((y1, y2))
+                found = True
+                break
+        if not found:
+            x_groups[x].append((y1, y2))
+    
+    # Check each group for boundary wall merge
+    result = list(horizontal)
+    merged_count = 0
+    
+    for group_x, intervals in x_groups.items():
+        # Merge all intervals in this group
+        all_y = []
+        for y1, y2 in intervals:
+            all_y.extend([y1, y2])
+        
+        min_y = min(all_y)
+        max_y = max(all_y)
+        span = max_y - min_y
+        
+        # ONLY merge if:
+        # 1. Near left OR right border (within 10% of width)
+        # 2. Spans >60% of image height
+        is_boundary = (group_x < left_border) or (group_x > right_border)
+        
+        if is_boundary and span >= threshold_height:
+            # Merge into single continuous boundary segment
+            result.append((int(group_x), int(min_y), int(group_x), int(max_y), "vertical"))
+            merged_count += len(intervals)
+        else:
+            # Keep individual segments (preserve door gaps in interior walls)
+            for y1, y2 in intervals:
+                result.append((int(group_x), int(y1), int(group_x), int(y2), "vertical"))
+    
+    if merged_count > 0:
+        print(f"Force-merged {merged_count} vertical boundary segments into full-height walls")
+    
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Step 6: Endpoint snapping
 # ---------------------------------------------------------------------------
 
@@ -537,16 +612,15 @@ def main():
     band_distance = max(10, int(0.035 * max_dim))
     gap_tolerance = max(6, int(0.02 * max_dim))
 
-    # 5b. Inject contour-based boundary segments (horizontal only)
+    # 5b. Inject contour-based boundary segments (both horizontal and vertical)
     boundary = detect_boundary_segments(binary, min_line_len)
 
     if boundary:
         injected = 0
         for bx1, by1, bx2, by2, ori, L in boundary:
-            if ori == 'horizontal':
-                filtered.append((bx1, by1, bx2, by2, ori, L))
-                injected += 1
-        print(f"Injected {injected} horizontal boundary segment(s)")
+            filtered.append((bx1, by1, bx2, by2, ori, L))
+            injected += 1
+        print(f"Injected {injected} boundary segment(s) (H+V)")
     merged = group_and_merge(filtered, gap_tolerance, band_distance,
                              thick_edges.shape, binary)
     print(f"After grouping & merging: {len(merged)}"
@@ -565,6 +639,9 @@ def main():
     if len(merged2) < len(merged):
         print(f"After 2nd merge pass: {len(merged2)}")
         merged = merged2
+
+    # 7c. Force-merge vertical boundary walls that span >70% of image height
+    merged = force_merge_boundary_walls(merged, thick_edges.shape)
 
     # 8. Remove short segments
     merged = remove_short_segments(merged, max_dim)
