@@ -211,10 +211,12 @@ def filter_by_binary_overlap(filtered, binary, min_overlap_ratio=0.5,
 # Step 5: Collinear grouping + interval merging
 # ---------------------------------------------------------------------------
 
-def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
+def group_and_merge(filtered, gap_tolerance_h, gap_tolerance_v, band_distance, img_shape, binary):
     """
     Group co-linear segments (same axis within band_distance), then merge
-    overlapping or near-touching intervals using gap_tolerance.
+    overlapping or near-touching intervals.
+    
+    Uses gap_tolerance_h for horizontal segments and gap_tolerance_v for vertical.
     """
     h, w = img_shape[:2]
     max_dim = max(h, w)
@@ -260,12 +262,12 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
             y_snap = int(round(float(np.median(y_vals))))
             intervals = sorted([(xa, xb) for (_, xa, xb) in g])
 
-            # Merge overlapping / near-touching intervals with gap check
+            # Merge overlapping / near-touching intervals with gap check (use separate tolerance for horizontal)
             merged_intervals = []
             cur_s, cur_e = intervals[0]
             for xa, xb in intervals[1:]:
                 gap = xa - cur_e
-                if gap <= gap_tolerance:
+                if gap <= gap_tolerance_h:
                     cur_e = max(cur_e, xb)
                 else:
                     merged_intervals.append((cur_s, cur_e))
@@ -308,14 +310,45 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
             x_snap = int(round(float(np.median(x_vals))))
             intervals = sorted([(ya, yb) for (_, ya, yb) in g])
 
-            # Merge with gap check to preserve door openings
+            # Merge with gap check to preserve door openings (use separate tolerance for vertical)
+            # Validate gap region in binary mask before merging
             merged_intervals = []
             cur_s, cur_e = intervals[0]
             for ya, yb in intervals[1:]:
                 gap = ya - cur_e
-                if gap <= gap_tolerance:
+                if gap <= gap_tolerance_v and gap > 0:
+                    # Check if gap region contains wall pixels
+                    gap_start = int(cur_e)
+                    gap_end = int(ya)
+                    gap_mid_x = int(round(x_snap))
+                    
+                    # Extract gap region from binary mask (3-pixel wide column)
+                    x1 = max(0, gap_mid_x - 1)
+                    x2 = min(binary.shape[1], gap_mid_x + 2)
+                    y1 = max(0, gap_start)
+                    y2 = min(binary.shape[0], gap_end)
+                    
+                    if y2 > y1 and x2 > x1:
+                        gap_region = binary[y1:y2, x1:x2]
+                        wall_pixels = int(np.count_nonzero(gap_region))
+                        total_pixels = gap_region.size
+                        wall_ratio = wall_pixels / total_pixels if total_pixels > 0 else 0
+                        
+                        # Only merge if gap region has wall pixels (> 30%)
+                        if wall_ratio > 0.3:
+                            cur_e = max(cur_e, yb)
+                        else:
+                            # Door opening - do not merge
+                            merged_intervals.append((cur_s, cur_e))
+                            cur_s, cur_e = ya, yb
+                    else:
+                        # Invalid region - merge
+                        cur_e = max(cur_e, yb)
+                elif gap <= gap_tolerance_v:
+                    # Zero or negative gap - merge
                     cur_e = max(cur_e, yb)
                 else:
+                    # Gap too large - do not merge
                     merged_intervals.append((cur_s, cur_e))
                     cur_s, cur_e = ya, yb
             merged_intervals.append((cur_s, cur_e))
@@ -325,82 +358,6 @@ def group_and_merge(filtered, gap_tolerance, band_distance, img_shape, binary):
                     merged.append((x_snap, int(a), x_snap, int(b), "vertical"))
 
     return merged
-
-
-# ---------------------------------------------------------------------------
-# Step 6b: Force-merge boundary walls
-# ---------------------------------------------------------------------------
-
-def force_merge_boundary_walls(merged, img_shape):
-    """
-    Force-merge vertical segments near outer borders that span >60% of image height.
-    
-    This ensures left/right boundary walls become single continuous segments
-    while preserving door gaps in interior walls.
-    
-    Only merges segments where x < 0.1 * width OR x > 0.9 * width.
-    """
-    h, w = img_shape[:2]
-    threshold_height = h * 0.6
-    left_border = w * 0.1   # 10% from left
-    right_border = w * 0.9  # 10% from right
-    
-    # Group vertical segments by x-coordinate
-    vertical = [(x1, y1, x2, y2) for (x1, y1, x2, y2, ori) in merged if ori == "vertical"]
-    horizontal = [(x1, y1, x2, y2, ori) for (x1, y1, x2, y2, ori) in merged if ori == "horizontal"]
-    
-    if not vertical:
-        return merged
-    
-    # Group verticals by x-coordinate (within tolerance)
-    x_groups = defaultdict(list)
-    x_tolerance = 15  # pixels
-    
-    for x1, y1, x2, y2 in vertical:
-        x = x1  # x1 == x2 for vertical
-        # Find existing group or start new one
-        found = False
-        for group_x in x_groups:
-            if abs(x - group_x) <= x_tolerance:
-                x_groups[group_x].append((y1, y2))
-                found = True
-                break
-        if not found:
-            x_groups[x].append((y1, y2))
-    
-    # Check each group for boundary wall merge
-    result = list(horizontal)
-    merged_count = 0
-    
-    for group_x, intervals in x_groups.items():
-        # Merge all intervals in this group
-        all_y = []
-        for y1, y2 in intervals:
-            all_y.extend([y1, y2])
-        
-        min_y = min(all_y)
-        max_y = max(all_y)
-        span = max_y - min_y
-        
-        # ONLY merge if:
-        # 1. Near left OR right border (within 10% of width)
-        # 2. Spans >60% of image height
-        is_boundary = (group_x < left_border) or (group_x > right_border)
-        
-        if is_boundary and span >= threshold_height:
-            # Merge into single continuous boundary segment
-            result.append((int(group_x), int(min_y), int(group_x), int(max_y), "vertical"))
-            merged_count += len(intervals)
-        else:
-            # Keep individual segments (preserve door gaps in interior walls)
-            for y1, y2 in intervals:
-                result.append((int(group_x), int(y1), int(group_x), int(y2), "vertical"))
-    
-    if merged_count > 0:
-        print(f"Force-merged {merged_count} vertical boundary segments into full-height walls")
-    
-    return result
-
 
 # ---------------------------------------------------------------------------
 # Step 6: Endpoint snapping
@@ -610,21 +567,65 @@ def main():
     print(f"After binary-overlap validation: {len(filtered)}")
 
     band_distance = max(10, int(0.035 * max_dim))
-    gap_tolerance = max(6, int(0.02 * max_dim))
+    gap_tolerance_h = max(6, int(0.02 * max_dim))   # Horizontal: larger tolerance
+    gap_tolerance_v = 10                            # Vertical: small fixed value to preserve door gaps
 
     # 5b. Inject contour-based boundary segments (both horizontal and vertical)
+    # Only inject if Hough-detected segments don't already cover the boundary
     boundary = detect_boundary_segments(binary, min_line_len)
 
     if boundary:
         injected = 0
+        skipped = 0
         for bx1, by1, bx2, by2, ori, L in boundary:
-            filtered.append((bx1, by1, bx2, by2, ori, L))
-            injected += 1
-        print(f"Injected {injected} boundary segment(s) (H+V)")
-    merged = group_and_merge(filtered, gap_tolerance, band_distance,
+            # For vertical boundary segments, check Hough coverage first
+            if ori == "vertical":
+                # Find existing vertical segments near this x position
+                bx = bx1  # x-coordinate of boundary
+                nearby_vert = [(x1, y1, x2, y2) for (x1, y1, x2, y2, o, l) in filtered 
+                               if o == "vertical" and abs(x1 - bx) < band_distance]
+                
+                if nearby_vert:
+                    # Compute total covered span
+                    intervals = []
+                    for x1, y1, x2, y2 in nearby_vert:
+                        ya, yb = min(y1, y2), max(y1, y2)
+                        intervals.append((ya, yb))
+                    
+                    # Merge intervals to get total coverage
+                    intervals.sort()
+                    merged_intervals = []
+                    cur_s, cur_e = intervals[0]
+                    for ya, yb in intervals[1:]:
+                        if ya <= cur_e:
+                            cur_e = max(cur_e, yb)
+                        else:
+                            merged_intervals.append((cur_s, cur_e))
+                            cur_s, cur_e = ya, yb
+                    merged_intervals.append((cur_s, cur_e))
+                    
+                    total_covered = sum(e - s for s, e in merged_intervals)
+                    boundary_span = by2 - by1
+                    coverage_ratio = total_covered / boundary_span if boundary_span > 0 else 0
+                    
+                    # Skip injection if Hough already covers >= 70%
+                    if coverage_ratio >= 0.7:
+                        skipped += 1
+                        continue
+                
+                # Inject boundary segment (Hough coverage < 70%)
+                filtered.append((bx1, by1, bx2, by2, ori, L))
+                injected += 1
+            else:
+                # Horizontal boundary: always inject
+                filtered.append((bx1, by1, bx2, by2, ori, L))
+                injected += 1
+        
+        print(f"Injected {injected} boundary segment(s) (H+V), skipped {skipped} (Hough coverage OK)")
+    merged = group_and_merge(filtered, gap_tolerance_h, gap_tolerance_v, band_distance,
                              thick_edges.shape, binary)
     print(f"After grouping & merging: {len(merged)}"
-          f"  (band={band_distance}, gap={gap_tolerance})")
+          f"  (band={band_distance}, gap_h={gap_tolerance_h}, gap_v={gap_tolerance_v})")
 
     # 7. Endpoint snapping
     snap_radius = max(8, int(0.01 * max_dim))        # ~20px at 2000px
@@ -635,13 +636,10 @@ def main():
     merged2 = group_and_merge(
         [(x1, y1, x2, y2, ori, compute_length(x1, y1, x2, y2))
          for (x1, y1, x2, y2, ori) in merged],
-        gap_tolerance, band_distance, thick_edges.shape, binary)
+        gap_tolerance_h, gap_tolerance_v, band_distance, thick_edges.shape, binary)
     if len(merged2) < len(merged):
         print(f"After 2nd merge pass: {len(merged2)}")
         merged = merged2
-
-    # 7c. Force-merge vertical boundary walls that span >70% of image height
-    merged = force_merge_boundary_walls(merged, thick_edges.shape)
 
     # 8. Remove short segments
     merged = remove_short_segments(merged, max_dim)
