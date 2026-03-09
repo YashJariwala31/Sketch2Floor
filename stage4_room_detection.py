@@ -1,20 +1,23 @@
 # stage4_room_detection.py
 #
-# Stage 4 – Room Detection from Wall Graph
+# Stage 4 – Room Detection via Flood Fill (Connected Components)
 #
-# Detect enclosed rooms by finding rectangular regions bounded by
-# perpendicular wall segments.
+# Detect enclosed rooms directly from the binary wall mask using
+# connected component analysis (flood fill).
 #
-# Input:  data/intermediate/wall_graph.json (from Stage 3)
+# Input:  data/intermediate/binary_wall_mask.png (from Stage 1)
 # Output: data/intermediate/room_polygons.json
 #         data/intermediate/room_detection_overlay.png
 #
 # Algorithm:
-#   1. Extract horizontal and vertical wall segments from graph edges
-#   2. Find corner candidates where H and V walls share endpoints
-#   3. Identify potential rectangles from corner pairs
-#   4. Validate rectangles have enclosing walls on all sides
-#   5. Filter rooms by area (reject noise and outer boundary)
+#   1. Load binary wall mask (walls = 255, background = 0)
+#   2. Invert mask (walls = 0, free space = 255)
+#   3. Apply light morphological closing (3x3) to seal 1-2px leaks
+#   4. Run connectedComponents to find enclosed regions
+#   5. Ignore label 0 (background outside building)
+#   6. Filter regions by area and border-touching
+#   7. Extract and approximate contours
+#   8. Store polygon vertices in room_polygons.json
 
 import sys
 import os
@@ -26,274 +29,174 @@ from collections import defaultdict
 
 
 # -- Tolerances ---------------------------------------------------------------
-MIN_ROOM_AREA = 2000      # Minimum area in px² (reject noise regions)
-WALL_GAP_TOL = 50         # Max gap for walls to be considered connected
+MIN_ROOM_AREA_RATIO = 0.005  # Minimum room area as fraction of image (0.5%)
+POLY_EPSILON = 3            # Contour approximation epsilon in pixels
+MORPH_KERNEL_SIZE = 3       # Closing kernel to seal tiny leaks
 
 
 # =============================================================================
-# 1. Load wall graph
+# 1. Load binary wall mask
 # =============================================================================
 
-def load_wall_graph(json_path=None):
-    """Load wall graph from Stage 3 output."""
-    if json_path is None:
-        json_path = os.path.join("data", "intermediate", "wall_graph.json")
+def load_wall_mask(mask_path=None):
+    """Load binary wall mask from Stage 1 output."""
+    if mask_path is None:
+        mask_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
     
-    with open(json_path, "r") as f:
-        data = json.load(f)
+    if not os.path.exists(mask_path):
+        raise FileNotFoundError(f"Binary wall mask not found: {mask_path}")
     
-    nodes = data["nodes"]
-    edges = data["edges"]
+    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        raise ValueError(f"Failed to load wall mask: {mask_path}")
     
-    # Build coordinate lookup
-    node_coords = {n["id"]: (n["x"], n["y"]) for n in nodes}
-    
-    print(f"Loaded wall graph: {len(nodes)} nodes, {len(edges)} edges")
-    return nodes, edges, node_coords
+    print(f"Loaded wall mask: {mask.shape[1]}x{mask.shape[0]}")
+    return mask
 
 
 # =============================================================================
-# 2. Extract wall segments from edges
+# 2. Invert and preprocess mask
 # =============================================================================
 
-def extract_wall_segments(edges, node_coords):
+def preprocess_mask(mask):
     """
-    Categorize edges as horizontal or vertical segments.
+    Preprocess mask for room detection by temporarily sealing door gaps.
+
+    Steps:
+    1. Strong dilation to close door openings
+    2. Morphological closing to seal narrow gaps
+    3. Invert to obtain free space
+    """
+
+    # Step 1: Strengthen walls significantly
+    kernel_dilate = np.ones((7, 7), np.uint8)
+    walls = cv2.dilate(mask, kernel_dilate, iterations=1)
+
+    # Step 2: Close narrow door gaps
+    kernel_close = np.ones((5, 5), np.uint8)
+    walls = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, kernel_close)
+
+    # Step 3: Invert to get free space
+    free_space = cv2.bitwise_not(walls)
+
+    print('Preprocessed: strong dilation(7x7) + closing(5x5) + inverted')
+    return free_space
+
+
+# =============================================================================
+# 3. Find connected components (enclosed regions)
+# =============================================================================
+
+def find_connected_regions(mask):
+    """
+    Find connected components in the preprocessed mask.
     
     Returns:
-        h_walls: list of (y, x_min, x_max) for horizontal walls
-        v_walls: list of (x, y_min, y_max) for vertical walls
+        num_labels: total number of labels (including background)
+        labels: 2D array where each pixel has its component label
+        stats: statistics for each component (x, y, width, height, area)
+        centroids: centroid coordinates for each component
     """
-    h_walls = []  # (y, x_min, x_max)
-    v_walls = []  # (x, y_min, y_max)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        mask, connectivity=8
+    )
     
-    for e in edges:
-        n1, n2 = e["start_node"], e["end_node"]
-        x1, y1 = node_coords[n1]
-        x2, y2 = node_coords[n2]
-        
-        if abs(y1 - y2) < 5:  # Horizontal (same Y)
-            y = y1
-            x_min, x_max = min(x1, x2), max(x1, x2)
-            h_walls.append((y, x_min, x_max))
-        elif abs(x1 - x2) < 5:  # Vertical (same X)
-            x = x1
-            y_min, y_max = min(y1, y2), max(y1, y2)
-            v_walls.append((x, y_min, y_max))
-    
-    print(f"Wall segments: {len(h_walls)} horizontal, {len(v_walls)} vertical")
-    return h_walls, v_walls
+    print(f"Connected components: {num_labels - 1} regions (excluding background)")
+    return num_labels, labels, stats, centroids
 
 
 # =============================================================================
-# 3. Find corner points (H/V intersections)
+# 4. Filter regions to valid rooms
 # =============================================================================
 
-def find_corners(h_walls, v_walls):
+def filter_regions(num_labels, stats, img_shape):
     """
-    Find corner points where horizontal and vertical walls intersect.
-    
-    A corner exists where:
-        - A vertical wall's x is within a horizontal wall's x-range
-        - A horizontal wall's y is within a vertical wall's y-range
-    
-    Returns list of (x, y) corner coordinates.
+    Filter connected components to valid rooms.
+
+    Strategy:
+    - Remove components touching image border (exterior)
+    - Keep remaining components above minimum area
     """
-    corners = set()
-    
-    for hy, hx1, hx2 in h_walls:
-        for vx, vy1, vy2 in v_walls:
-            # Check if V's x is within H's x-range
-            if hx1 <= vx <= hx2:
-                # Check if H's y is within V's y-range
-                if vy1 <= hy <= vy2:
-                    corners.add((vx, hy))
-    
-    print(f"Found {len(corners)} corner points")
-    return list(corners)
+    h, w = img_shape[:2]
+    total_area = h * w
+    min_area = total_area * MIN_ROOM_AREA_RATIO
+
+    valid_regions = []
+
+    for label_id in range(1, num_labels):
+        x = stats[label_id][cv2.CC_STAT_LEFT]
+        y = stats[label_id][cv2.CC_STAT_TOP]
+        width = stats[label_id][cv2.CC_STAT_WIDTH]
+        height = stats[label_id][cv2.CC_STAT_HEIGHT]
+        area = stats[label_id][cv2.CC_STAT_AREA]
+
+        # Check if region touches border
+        touches_border = (x == 0 or y == 0 or
+                          x + width >= w or
+                          y + height >= h)
+
+        if touches_border:
+            continue
+
+        if area < min_area:
+            continue
+
+        valid_regions.append((label_id, area))
+
+    print(f"After filtering: {len(valid_regions)} valid rooms (border regions removed)")
+    return valid_regions
 
 
 # =============================================================================
-# 4. Detect rooms from binary wall mask (contour-based)
+# 5. Extract and approximate contours
 # =============================================================================
 
-def detect_rooms_from_mask(binary_path=None, min_area=MIN_ROOM_AREA):
+def extract_room_polygons(labels, valid_regions, img_shape):
     """
-    Detect enclosed rooms by finding empty regions surrounded by walls.
+    Extract and approximate contours for each valid room region.
     
-    Rooms are the BACKGROUND regions enclosed by walls, not holes in walls.
-    We flood-fill from the image edges to mark exterior, then find remaining
-    enclosed white regions.
-    
-    Returns list of (x1, y1, x2, y2, area, contour) tuples.
+    Returns list of dicts with room_id, polygon, and area.
     """
-    if binary_path is None:
-        binary_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
-    
-    if not os.path.exists(binary_path):
-        print(f"Binary wall mask not found at {binary_path}")
-        return [], (720, 1024)
-    
-    # Load binary mask (walls are white/255, background is black/0)
-    mask = cv2.imread(binary_path, cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        print("Failed to load binary wall mask")
-        return [], (720, 1024)
-    
-    h, w = mask.shape
-    print(f"Binary mask: {w}x{h}")
-    
-    # Close small gaps in walls to prevent flood-fill leakage
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    closed_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    
-    # Create a mask for flood filling - need 2 pixels larger
-    flood_mask = np.zeros((h + 2, w + 2), np.uint8)
-    
-    # Invert: walls become 0 (barriers), background becomes 255 (fillable)
-    inverted = cv2.bitwise_not(closed_mask)
-    
-    # Flood fill from all four corners to mark exterior regions
-    # Use 128 as the fill value to distinguish from rooms (255)
-    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
-    
-    for cx, cy in corners:
-        if inverted[cy, cx] == 255:
-            cv2.floodFill(inverted, flood_mask, (cx, cy), 128)
-    
-    # Now: 128 = exterior (connected to edges), 255 = enclosed rooms, 0 = walls
-    room_mask = (inverted == 255).astype(np.uint8) * 255
-    
-    # Debug: count pixels
-    exterior_px = np.count_nonzero(inverted == 128)
-    room_px = np.count_nonzero(room_mask)
-    wall_px = np.count_nonzero(closed_mask)
-    print(f"  Exterior: {exterior_px}px, Rooms: {room_px}px, Walls: {wall_px}px")
-    
-    # Find contours of enclosed regions
-    contours, _ = cv2.findContours(room_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     rooms = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area >= min_area:
-            x, y, bw, bh = cv2.boundingRect(contour)
-            rooms.append((x, y, x + bw, y + bh, area, contour))
     
-    print(f"Detected {len(rooms)} enclosed regions from mask")
-    return rooms, (h, w)
-
-
-# =============================================================================
-# 5. Deduplicate and filter rectangles
-# =============================================================================
-
-def deduplicate_rectangles(rectangles):
-    """
-    Remove duplicate and nested rectangles.
-    Keep only the smallest rectangle at each location.
-    """
-    if not rectangles:
-        return []
-    
-    # Sort by area (ascending) - process smallest first
-    sorted_rects = sorted(rectangles, key=lambda r: (r[2]-r[0])*(r[3]-r[1]))
-    
-    unique = []
-    for rect in sorted_rects:
-        rx1, ry1, rx2, ry2 = rect
-        is_duplicate = False
+    for room_id, (label_id, area) in enumerate(valid_regions):
+        # Create mask for this region
+        region_mask = (labels == label_id).astype(np.uint8) * 255
         
-        for existing in unique:
-            ex1, ey1, ex2, ey2 = existing
-            # Check if rect is inside existing
-            if ex1 <= rx1 and ey1 <= ry1 and ex2 >= rx2 and ey2 >= ry2:
-                is_duplicate = True
-                break
+        # Find contours
+        contours, _ = cv2.findContours(
+            region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         
-        if not is_duplicate:
-            unique.append(rect)
-    
-    print(f"After deduplication: {len(unique)} unique rectangles")
-    return unique
-
-
-# =============================================================================
-# 6. Compute polygon area (shoelace formula)
-# =============================================================================
-
-def compute_polygon_area(polygon):
-    """
-    Compute polygon area using the shoelace formula.
-    
-    Area = 0.5 * |sum(x_i * y_{i+1} - x_{i+1} * y_i)|
-    
-    Works for any simple polygon (convex or concave).
-    """
-    if len(polygon) < 3:
-        return 0.0
-    
-    n = len(polygon)
-    area = 0.0
-    
-    for i in range(n):
-        j = (i + 1) % n
-        area += polygon[i][0] * polygon[j][1]
-        area -= polygon[j][0] * polygon[i][1]
-    
-    return abs(area) / 2.0
-
-
-# =============================================================================
-# 7. Filter rooms
-# =============================================================================
-
-def filter_rooms(polygons_with_areas, min_area=MIN_ROOM_AREA):
-    """
-    Filter rooms based on area criteria:
-    
-    1. Reject polygons smaller than min_area (noise regions)
-    
-    Note: We do NOT remove the largest polygon because the flood-fill
-    already excluded the exterior. The remaining regions are all rooms.
-    
-    Returns filtered list of (polygon, area) tuples.
-    """
-    if not polygons_with_areas:
-        return []
-    
-    # Filter by minimum area
-    filtered = [(poly, area) for poly, area in polygons_with_areas if area >= min_area]
-    
-    removed_small = len(polygons_with_areas) - len(filtered)
-    
-    print(f"Filtered: {len(polygons_with_areas)} -> {len(filtered)} rooms")
-    if removed_small > 0:
-        print(f"  Removed {removed_small} small regions (< {min_area} px²)")
-    
-    return filtered
-
-
-# =============================================================================
-# 8. Build output
-# =============================================================================
-
-def build_output(rooms):
-    """
-    Build the output format for room polygons.
-    """
-    output = []
-    for i, (polygon, area) in enumerate(rooms):
-        output.append({
-            "room_id": i,
+        if not contours:
+            continue
+        
+        # Get the largest contour (should be the room boundary)
+        contour = max(contours, key=cv2.contourArea)
+        
+        # Approximate contour to reduce vertices
+        epsilon = POLY_EPSILON
+        approx = cv2.approxPolyDP(contour, epsilon, closed=True)
+        
+        # Convert to polygon format (list of [x, y] coordinates)
+        polygon = approx.reshape(-1, 2).tolist()
+        
+        # Ensure polygon has at least 3 vertices
+        if len(polygon) < 3:
+            continue
+        
+        rooms.append({
+            "room_id": room_id,
             "polygon": polygon,
-            "area_px": round(area, 1)
+            "area_px": round(float(area), 1)
         })
-    return output
+    
+    print(f"Extracted {len(rooms)} room polygons (epsilon={POLY_EPSILON}px)")
+    return rooms
 
 
 # =============================================================================
-# 9. Save outputs
+# 6. Save outputs
 # =============================================================================
 
 def save_outputs(rooms, save_dir=None):
@@ -311,45 +214,23 @@ def save_outputs(rooms, save_dir=None):
 
 
 # =============================================================================
-# 10. Visualization
+# 7. Visualization
 # =============================================================================
 
-def get_image_dimensions():
-    """Get image dimensions from binary wall mask."""
-    p = os.path.join("data", "intermediate", "binary_wall_mask.png")
-    if os.path.exists(p):
-        img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
-        if img is not None:
-            return img.shape
-    return (720, 1024)
-
-
-def visualize(rooms, nodes, edges, node_coords, img_shape, save_dir=None):
-    """
-    Visualize detected rooms as colored polygons overlaid on wall graph.
-    """
+def visualize(rooms, mask, save_dir=None):
+    """Visualize detected rooms as colored polygons overlaid on wall mask."""
     if save_dir is None:
         save_dir = os.path.join("data", "intermediate")
     
-    h, w = img_shape[:2]
+    h, w = mask.shape[:2]
     
-    # Try to load wall graph image as background
-    graph_path = os.path.join(save_dir, "wall_graph.png")
-    if os.path.exists(graph_path):
-        bg = cv2.imread(graph_path)
-        if bg is None:
-            bg = np.zeros((h, w, 3), np.uint8)
-    else:
-        # Try binary wall mask
-        mask_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
-        if os.path.exists(mask_path):
-            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            if mask is not None:
-                bg = cv2.cvtColor((mask * 0.35).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-            else:
-                bg = np.zeros((h, w, 3), np.uint8)
-        else:
-            bg = np.zeros((h, w, 3), np.uint8)
+    # Create background from wall mask (dimmed)
+    bg = cv2.cvtColor((mask * 0.35).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    
+    # Draw walls in white for contrast
+    wall_overlay = bg.copy()
+    wall_overlay[mask > 0] = (200, 200, 200)
+    cv2.addWeighted(wall_overlay, 0.5, bg, 0.5, 0, bg)
     
     # Generate distinct colors for rooms
     colors = [
@@ -364,9 +245,9 @@ def visualize(rooms, nodes, edges, node_coords, img_shape, save_dir=None):
     ]
     
     # Draw each room as a filled polygon
-    for i, room in enumerate(rooms):
+    for room in rooms:
         polygon = room["polygon"]
-        color = colors[i % len(colors)]
+        color = colors[room["room_id"] % len(colors)]
         
         # Convert to numpy array for cv2.fillPoly
         pts = np.array(polygon, dtype=np.int32)
@@ -399,57 +280,38 @@ def visualize(rooms, nodes, edges, node_coords, img_shape, save_dir=None):
 # Main
 # =============================================================================
 
-def rectangle_to_polygon(rect):
-    """Convert rectangle (x1, y1, x2, y2) to polygon vertices."""
-    x1, y1, x2, y2 = rect
-    return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-
-
 def main():
     print("=" * 55)
-    print("  Stage 4: Room Detection from Wall Graph")
+    print("  Stage 4: Room Detection via Flood Fill")
     print("=" * 55)
     print()
     
-    # 1. Load wall graph (for visualization overlay)
-    nodes, edges, node_coords = load_wall_graph()
+    # 1. Load binary wall mask
+    mask = load_wall_mask()
     
-    # 2. Detect rooms from binary wall mask (contour-based)
-    rooms_data, img_shape = detect_rooms_from_mask(min_area=MIN_ROOM_AREA)
+    # 2. Preprocess (invert + light closing)
+    processed = preprocess_mask(mask)
     
-    # 3. Convert to polygons and compute areas
-    polygons_with_areas = []
-    for x1, y1, x2, y2, area, contour in rooms_data:
-        # Approximate contour to polygon
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-        polygon = [[int(pt[0][0]), int(pt[0][1])] for pt in approx]
-        
-        # Ensure polygon has at least 3 vertices
-        if len(polygon) >= 3:
-            # Recompute area from polygon
-            poly_area = compute_polygon_area(polygon)
-            polygons_with_areas.append((polygon, poly_area))
+    # 3. Find connected components
+    num_labels, labels, stats, centroids = find_connected_regions(processed)
     
-    print(f"Converted {len(polygons_with_areas)} contours to polygons")
+    # 4. Filter to valid rooms
+    valid_regions = filter_regions(num_labels, stats, mask.shape)
     
-    # 4. Filter rooms
-    rooms = filter_rooms(polygons_with_areas, MIN_ROOM_AREA)
-    
-    # 5. Build output
-    output = build_output(rooms)
+    # 5. Extract polygons
+    rooms = extract_room_polygons(labels, valid_regions, mask.shape)
     
     # 6. Save outputs
-    save_outputs(output)
+    save_outputs(rooms)
     
     # 7. Visualize
-    visualize(output, nodes, edges, node_coords, img_shape)
+    visualize(rooms, mask)
     
     # Summary
     print()
-    print(f"Detected {len(output)} rooms")
-    if output:
-        areas = [r["area_px"] for r in output]
+    print(f"Detected {len(rooms)} rooms")
+    if rooms:
+        areas = [r["area_px"] for r in rooms]
         print(f"Area range: {min(areas):.0f} - {max(areas):.0f} px²")
     
     print("\nStage 4 completed successfully!")
