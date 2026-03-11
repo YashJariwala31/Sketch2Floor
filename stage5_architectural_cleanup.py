@@ -365,9 +365,16 @@ def calculate_polygon_area(vertices: List[Tuple[float, float]]) -> float:
 
 def merge_overlapping_polygons(polygons: List[WallPolygon]) -> List[WallPolygon]:
     """Merge overlapping wall polygons to eliminate redundancy."""
-    # Simplified implementation - return as-is for now
-    # A full implementation would use polygon union operations
-    return polygons
+    unique_polygons = {}
+
+    for poly in polygons:
+        # Create canonical key from sorted vertices
+        key = tuple(sorted(poly.vertices))
+
+        if key not in unique_polygons:
+            unique_polygons[key] = poly
+
+    return list(unique_polygons.values())
 
 
 # =============================================================================
