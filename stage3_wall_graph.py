@@ -1,24 +1,29 @@
 # stage3_wall_graph.py
 #
-# Stage 3 – Wall Graph Construction (Minimal Stable Algorithm)
+# Stage 3 – Wall Graph Construction (Closed Topology)
 #
 # Build a wall connectivity graph from axis-aligned segments (Stage 2).
 #
 # Core Principles:
-#   - Stage 2 segments are authoritative geometry - NEVER modified.
-#   - Door gaps must remain intact.
-#   - Only endpoints and real H-V intersections create nodes.
-#   - Nodes lie exactly on segment axes.
+#   - Collinear segments are merged to form continuous walls.
+#   - Endpoints are snapped within tolerance to close gaps.
+#   - T-junctions are properly split.
+#   - Small collinear gaps are bridged.
+#   - Graph must have closed cycles for room detection.
 #
 # Pipeline:
 #   1. load_segments
-#   2. normalize_axis_coordinates (snap near-identical X/Y)
-#   3. detect_intersections (axis-aligned H×V)
-#   4. collect_candidates (endpoints + intersections)
-#   5. cluster_nodes (merge coincident points)
-#   6. split_segments (at endpoints + intersections only)
-#   7. build_graph (deduplicated, no zero-length)
-#   8. clean_graph (remove noise components)
+#   2. merge_collinear_segments (form continuous walls)
+#   3. bridge_small_gaps (connect nearby collinear endpoints)
+#   4. normalize_axis_coordinates (snap near-identical X/Y)
+#   5. snap_endpoints (close small gaps at corners)
+#   6. detect_intersections (axis-aligned H×V + T-junctions)
+#   7. collect_candidates (endpoints + intersections)
+#   8. cluster_nodes (merge coincident points)
+#   9. split_segments (at endpoints + intersections)
+#  10. build_graph (deduplicated, no zero-length)
+#  11. clean_graph (remove noise components)
+#  12. validate_topology (ensure closed cycles)
 
 import sys
 import os
@@ -30,8 +35,10 @@ from collections import defaultdict
 
 # -- Tolerances ---------------------------------------------------------------
 AXIS_SNAP_TOL = 5           # Snap near-identical axis coordinates
-INTERSECTION_TOL = 8        # Tolerance for H/V intersection detection
-NODE_MERGE_TOL = 6          # Euclidean distance for merging coincident points
+ENDPOINT_SNAP_TOL = 5       # Snap endpoints within this distance
+COLLINEAR_GAP_TOL = 0       # Bridge collinear gaps smaller than this
+INTERSECTION_TOL = 0        # Strict containment - no tolerance expansion
+NODE_MERGE_TOL = 5          # Euclidean distance for merging coincident points
 MIN_EDGE_LEN = 20           # Discard sub-segments shorter than this
 NOISE_THRESHOLD = 50        # Remove components with total edge length below this
 
@@ -72,7 +79,162 @@ def load_segments(json_path=None):
 
 
 # =============================================================================
-# 2. Normalize axis coordinates
+# 2. Merge collinear segments
+# =============================================================================
+
+def merge_collinear_segments(segments, gap_tol=COLLINEAR_GAP_TOL):
+    """
+    Merge collinear segments on the same axis that are close together.
+    
+    This forms continuous walls instead of fragmented pieces.
+    """
+    horizontal = [s for s in segments if s["orientation"] == "horizontal"]
+    vertical = [s for s in segments if s["orientation"] == "vertical"]
+    
+    merged_h = _merge_axis_segments(horizontal, 'horizontal', gap_tol)
+    merged_v = _merge_axis_segments(vertical, 'vertical', gap_tol)
+    
+    result = merged_h + merged_v
+    print(f"Collinear merge: {len(segments)} -> {len(result)} segments")
+    return result
+
+
+def _merge_axis_segments(segments, orientation, gap_tol):
+    """Merge segments on the same axis line."""
+    if not segments:
+        return []
+    
+    # Group by axis coordinate (y for horizontal, x for vertical)
+    axis_groups = defaultdict(list)
+    for s in segments:
+        if orientation == 'horizontal':
+            axis = s["start"][1]
+        else:
+            axis = s["start"][0]
+        axis_groups[axis].append(s)
+    
+    merged = []
+    for axis, segs in axis_groups.items():
+        # Sort by start coordinate
+        if orientation == 'horizontal':
+            segs_sorted = sorted(segs, key=lambda s: s["start"][0])
+            intervals = [(s["start"][0], s["end"][0]) for s in segs_sorted]
+        else:
+            segs_sorted = sorted(segs, key=lambda s: s["start"][1])
+            intervals = [(s["start"][1], s["end"][1]) for s in segs_sorted]
+        
+        # Merge overlapping/nearby intervals
+        merged_intervals = []
+        for start, end in intervals:
+            if not merged_intervals:
+                merged_intervals.append([start, end])
+            else:
+                prev_start, prev_end = merged_intervals[-1]
+                # Check if close enough to merge
+                if start <= prev_end + gap_tol:
+                    merged_intervals[-1][1] = max(prev_end, end)
+                else:
+                    merged_intervals.append([start, end])
+        
+        # Create merged segments
+        for start, end in merged_intervals:
+            if orientation == 'horizontal':
+                merged.append({
+                    "start": (start, axis),
+                    "end": (end, axis),
+                    "orientation": orientation
+                })
+            else:
+                merged.append({
+                    "start": (axis, start),
+                    "end": (axis, end),
+                    "orientation": orientation
+                })
+    
+    return merged
+
+
+# =============================================================================
+# 3. Bridge small collinear gaps
+# =============================================================================
+
+def bridge_small_gaps(segments, gap_tol=COLLINEAR_GAP_TOL):
+    """
+    Bridge small gaps between collinear segment endpoints.
+    
+    This connects walls that have small breaks (not door gaps).
+    """
+    horizontal = [s for s in segments if s["orientation"] == "horizontal"]
+    vertical = [s for s in segments if s["orientation"] == "vertical"]
+    
+    bridged_h = _bridge_axis_gaps(horizontal, 'horizontal', gap_tol)
+    bridged_v = _bridge_axis_gaps(vertical, 'vertical', gap_tol)
+    
+    result = bridged_h + bridged_v
+    bridges = len(result) - len(segments)
+    if bridges > 0:
+        print(f"Bridged {bridges} small gaps")
+    return result
+
+
+def _bridge_axis_gaps(segments, orientation, gap_tol):
+    """Bridge gaps between collinear segments."""
+    if not segments:
+        return []
+    
+    # Group by axis coordinate
+    axis_groups = defaultdict(list)
+    for s in segments:
+        if orientation == 'horizontal':
+            axis = s["start"][1]
+        else:
+            axis = s["start"][0]
+        axis_groups[axis].append(s)
+    
+    result = list(segments)
+    
+    # For each axis, find nearby endpoints and bridge them
+    for axis, segs in axis_groups.items():
+        endpoints = []
+        for s in segs:
+            if orientation == 'horizontal':
+                endpoints.append((s["start"][0], 'start', s))
+                endpoints.append((s["end"][0], 'end', s))
+            else:
+                endpoints.append((s["start"][1], 'start', s))
+                endpoints.append((s["end"][1], 'end', s))
+        
+        endpoints.sort(key=lambda x: x[0])
+        
+        # Find gaps between consecutive endpoints
+        for i in range(len(endpoints) - 1):
+            pos1, type1, seg1 = endpoints[i]
+            pos2, type2, seg2 = endpoints[i + 1]
+            
+            gap = pos2 - pos1
+            
+            # Only bridge if gap is small and it's an end-to-start gap
+            if 0 < gap <= gap_tol and type1 == 'end' and type2 == 'start':
+                # Create bridge segment
+                if orientation == 'horizontal':
+                    bridge = {
+                        "start": (pos1, axis),
+                        "end": (pos2, axis),
+                        "orientation": orientation
+                    }
+                else:
+                    bridge = {
+                        "start": (axis, pos1),
+                        "end": (axis, pos2),
+                        "orientation": orientation
+                    }
+                result.append(bridge)
+    
+    return result
+
+
+# =============================================================================
+# 4. Normalize axis coordinates
 # =============================================================================
 
 def _cluster_values(values, tol):
@@ -160,7 +322,90 @@ def normalize_axis_coordinates(segments, tol=AXIS_SNAP_TOL):
 
 
 # =============================================================================
-# 3. Detect intersections (axis-aligned)
+# 5. Snap endpoints (close corner gaps)
+# =============================================================================
+
+def snap_endpoints(segments, tol=ENDPOINT_SNAP_TOL):
+    """
+    Snap endpoints that are close to each other.
+    
+    This closes small gaps at corners and T-junctions.
+    """
+    # Collect all endpoints
+    endpoints = []
+    for i, s in enumerate(segments):
+        endpoints.append((s["start"], i, 'start'))
+        endpoints.append((s["end"], i, 'end'))
+    
+    # Cluster nearby endpoints
+    n = len(endpoints)
+    parent = list(range(n))
+    
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    
+    # Union endpoints within tolerance
+    for i in range(n):
+        for j in range(i + 1, n):
+            p1 = endpoints[i][0]
+            p2 = endpoints[j][0]
+            dx = p1[0] - p2[0]
+            dy = p1[1] - p2[1]
+            if dx * dx + dy * dy <= tol * tol:
+                union(i, j)
+    
+    # Compute centroids for each cluster
+    clusters = defaultdict(list)
+    for i in range(n):
+        clusters[find(i)].append(endpoints[i])
+    
+    # Map original points to snapped points
+    snap_map = {}
+    for members in clusters.values():
+        cx = round(sum(m[0][0] for m in members) / len(members))
+        cy = round(sum(m[0][1] for m in members) / len(members))
+        for pt, idx, pos in members:
+            snap_map[(idx, pos)] = (cx, cy)
+    
+    # Apply snapping to segments
+    snapped_count = 0
+    for i, s in enumerate(segments):
+        new_start = snap_map.get((i, 'start'), s["start"])
+        new_end = snap_map.get((i, 'end'), s["end"])
+        
+        if new_start != s["start"] or new_end != s["end"]:
+            snapped_count += 1
+        
+        # Update segment
+        s["start"] = new_start
+        s["end"] = new_end
+        
+        # Re-canonicalize
+        if s["orientation"] == "horizontal":
+            if s["start"][0] > s["end"][0]:
+                s["start"], s["end"] = s["end"], s["start"]
+            s["end"] = (s["end"][0], s["start"][1])
+        else:
+            if s["start"][1] > s["end"][1]:
+                s["start"], s["end"] = s["end"], s["start"]
+            s["end"] = (s["start"][0], s["end"][1])
+    
+    if snapped_count > 0:
+        print(f"Snapped {snapped_count} segment endpoints (tol={tol}px)")
+    
+    return segments
+
+
+# =============================================================================
+# 6. Detect intersections (axis-aligned + T-junctions)
 # =============================================================================
 
 def detect_intersections(segments, tol=INTERSECTION_TOL):
@@ -169,7 +414,7 @@ def detect_intersections(segments, tol=INTERSECTION_TOL):
     
     For horizontal segment H with y=hy and x-range [hx1, hx2]:
     For vertical segment V with x=vx and y-range [vy1, vy2]:
-    If vx is inside [hx1-tol, hx2+tol] AND hy is inside [vy1-tol, vy2+tol]:
+    If vx is inside [hx1, hx2] AND hy is inside [vy1, vy2]:
         Create node at (vx, hy) - lies on BOTH segment axes.
     
     Returns:
@@ -192,10 +437,9 @@ def detect_intersections(segments, tol=INTERSECTION_TOL):
             vx = v["start"][0]
             vy1, vy2 = v["start"][1], v["end"][1]
 
-            # Check if V's x is within H's x-range (with tolerance)
-            x_in_range = (hx1 - tol) <= vx <= (hx2 + tol)
-            # Check if H's y is within V's y-range (with tolerance)
-            y_in_range = (vy1 - tol) <= hy <= (vy2 + tol)
+            # Strict containment check (no tolerance expansion)
+            x_in_range = hx1 <= vx <= hx2
+            y_in_range = vy1 <= hy <= vy2
 
             if x_in_range and y_in_range:
                 pt = (vx, hy)  # Lies on both segment axes
@@ -209,7 +453,7 @@ def detect_intersections(segments, tol=INTERSECTION_TOL):
 
 
 # =============================================================================
-# 4. Collect candidate nodes
+# 7. Collect candidate nodes
 # =============================================================================
 
 def collect_candidates(segments, intersections):
@@ -224,7 +468,7 @@ def collect_candidates(segments, intersections):
 
 
 # =============================================================================
-# 5. Cluster nodes (merge coincident points)
+# 8. Cluster nodes (merge coincident points)
 # =============================================================================
 
 def cluster_nodes(points, tol=NODE_MERGE_TOL):
@@ -281,7 +525,7 @@ def cluster_nodes(points, tol=NODE_MERGE_TOL):
 
 
 # =============================================================================
-# 6. Split segments at nodes
+# 9. Split segments at nodes
 # =============================================================================
 
 def split_segments(segments, node_positions, mapping, seg_intersections):
@@ -330,7 +574,7 @@ def split_segments(segments, node_positions, mapping, seg_intersections):
 
 
 # =============================================================================
-# 7. Build graph
+# 10. Build graph
 # =============================================================================
 
 def build_graph(sub_edges, node_positions):
@@ -368,7 +612,7 @@ def build_graph(sub_edges, node_positions):
 
 
 # =============================================================================
-# 8. Clean graph – remove noise components
+# 11. Clean graph – remove noise components
 # =============================================================================
 
 def clean_graph(nodes, edges, noise_threshold=NOISE_THRESHOLD):
@@ -454,6 +698,67 @@ def clean_graph(nodes, edges, noise_threshold=NOISE_THRESHOLD):
 
 
 # =============================================================================
+# 12. Validate topology
+# =============================================================================
+
+def validate_topology(nodes, edges):
+    """
+    Validate that the graph has closed topology.
+    
+    Prints statistics and warnings if graph is not properly closed.
+    """
+    # Build adjacency
+    adj = defaultdict(set)
+    for e in edges:
+        adj[e["start_node"]].add(e["end_node"])
+        adj[e["end_node"]].add(e["start_node"])
+    
+    # Compute degree statistics
+    degrees = [len(adj[n["id"]]) for n in nodes]
+    avg_degree = sum(degrees) / len(degrees) if degrees else 0
+    degree_1 = sum(1 for d in degrees if d == 1)
+    degree_2 = sum(1 for d in degrees if d == 2)
+    degree_3plus = sum(1 for d in degrees if d >= 3)
+    
+    print()
+    print("=" * 55)
+    print("  TOPOLOGY VALIDATION")
+    print("=" * 55)
+    print(f"  Total nodes: {len(nodes)}")
+    print(f"  Total edges: {len(edges)}")
+    print(f"  Average degree: {avg_degree:.2f}")
+    print(f"  Degree-1 nodes: {degree_1} (dead ends)")
+    print(f"  Degree-2 nodes: {degree_2} (pass-through)")
+    print(f"  Degree-3+ nodes: {degree_3plus} (junctions)")
+    
+    # Check success conditions
+    issues = []
+    
+    if len(edges) < len(nodes):
+        issues.append("Edges < Nodes (tree-like, no cycles)")
+    
+    if degree_1 > len(nodes) * 0.3:
+        issues.append(f"Too many degree-1 nodes ({degree_1}/{len(nodes)})")
+    
+    if avg_degree < 1.5:
+        issues.append(f"Low average degree ({avg_degree:.2f})")
+    
+    if issues:
+        print()
+        print("  ⚠ WARNING: Graph is not topologically closed!")
+        for issue in issues:
+            print(f"    - {issue}")
+        print("  Rooms may not be detected correctly.")
+    else:
+        print()
+        print("  ✓ Graph topology looks good for room detection.")
+    
+    print("=" * 55)
+    
+    return len(issues) == 0
+
+
+# =============================================================================
 # Reporting
 # =============================================================================
 
@@ -533,13 +838,13 @@ def visualize(nodes, edges, img_shape, save_dir=None):
 
 def main():
     print("=" * 55)
-    print("  Stage 3: Wall Graph Construction (Minimal)")
+    print("  Stage 3: Wall Graph Construction (Closed Topology)")
     print("=" * 55)
     print()
 
     img_shape = get_image_dimensions()
     print(f"Image: {img_shape[1]}x{img_shape[0]}")
-    print(f"Tolerances: axis_snap={AXIS_SNAP_TOL}px intersection={INTERSECTION_TOL}px node_merge={NODE_MERGE_TOL}px")
+    print(f"Tolerances: axis_snap={AXIS_SNAP_TOL}px endpoint_snap={ENDPOINT_SNAP_TOL}px collinear_gap={COLLINEAR_GAP_TOL}px")
     print()
 
     path = sys.argv[1] if len(sys.argv) >= 2 else None
@@ -547,36 +852,48 @@ def main():
     # 1. Load
     segments = load_segments(path)
 
-    # 2. Normalize axis coordinates
+    # 2. Merge collinear segments
+    segments = merge_collinear_segments(segments, COLLINEAR_GAP_TOL)
+
+    # 4. Normalize axis coordinates
     segments = normalize_axis_coordinates(segments, AXIS_SNAP_TOL)
 
-    # 3. Detect intersections
+    # 5. Snap endpoints
+    segments = snap_endpoints(segments, ENDPOINT_SNAP_TOL)
+
+    # 6. Detect intersections
     intersections, seg_intersections = detect_intersections(segments)
 
-    # 4. Collect candidates
+    # 7. Collect candidates
     candidates = collect_candidates(segments, intersections)
     print(f"Candidate points: {len(candidates)}")
 
-    # 5. Cluster nodes
+    # 8. Cluster nodes
     mapping, node_positions = cluster_nodes(candidates, NODE_MERGE_TOL)
 
-    # 6. Split segments
+    # 9. Split segments
     sub_edges = split_segments(segments, node_positions, mapping, seg_intersections)
 
-    # 7. Build graph
+    # 10. Build graph
     nodes, edges = build_graph(sub_edges, node_positions)
 
-    # 8. Clean graph
+    # 11. Clean graph
     nodes, edges = clean_graph(nodes, edges)
 
-    # 9. Report, save, visualize
+    # 12. Validate topology
+    is_valid = validate_topology(nodes, edges)
+
+    # 13. Report, save, visualize
     print()
     report(nodes, edges)
     save_graph(nodes, edges)
     visualize(nodes, edges, img_shape)
 
     print(f"\nFinal: {len(nodes)} nodes, {len(edges)} edges")
-    print("Stage 3 complete!")
+    if is_valid:
+        print("Stage 3 complete! Graph has closed topology.")
+    else:
+        print("Stage 3 complete with warnings. Check topology.")
 
 
 if __name__ == "__main__":

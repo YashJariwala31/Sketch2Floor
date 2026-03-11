@@ -60,27 +60,28 @@ def load_wall_mask(mask_path=None):
 
 def preprocess_mask(mask):
     """
-    Preprocess mask for room detection by temporarily sealing door gaps.
+    Preprocess mask for robust room detection.
 
-    Steps:
-    1. Strong dilation to close door openings
-    2. Morphological closing to seal narrow gaps
-    3. Invert to obtain free space
+    Strategy:
+    - Invert mask (free space = 255)
+    - Seal only narrow gaps using distance transform
     """
 
-    # Step 1: Strengthen walls significantly
-    kernel_dilate = np.ones((7, 7), np.uint8)
-    walls = cv2.dilate(mask, kernel_dilate, iterations=1)
+    # Invert mask first
+    free_space = cv2.bitwise_not(mask)
 
-    # Step 2: Close narrow door gaps
-    kernel_close = np.ones((5, 5), np.uint8)
-    walls = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, kernel_close)
+    # Distance transform (distance to nearest wall)
+    dist = cv2.distanceTransform(free_space, cv2.DIST_L2, 5)
 
-    # Step 3: Invert to get free space
-    free_space = cv2.bitwise_not(walls)
+    # Threshold for narrow connections (tune 4–8 px)
+    gap_threshold = 6
 
-    print('Preprocessed: strong dilation(7x7) + closing(5x5) + inverted')
-    return free_space
+    # Remove narrow corridors
+    sealed = free_space.copy()
+    sealed[dist < gap_threshold] = 0
+
+    print('Preprocessed: inverted + distance_transform sealing (thresh=6)')
+    return sealed
 
 
 # =============================================================================
