@@ -104,4 +104,23 @@ subprocess.run(
     check=True,
 )
 
+print('[STEP 6b] Combined wall + door overlay...')
+combined_overlay = ROOT_DIR / 'predictions' / f'combined_overlay_{image_id}.png'
+subprocess.run(
+    [
+        python,
+        '-m',
+        'utils.combined_overlay',
+        '--image',
+        str(image_path),
+        '--walls',
+        str(wall_dst),
+        '--doors',
+        str(ROOT_DIR / 'placed_doors.json'),
+        '--out',
+        str(combined_overlay),
+    ],
+    check=True,
+)
+
 print('DONE')

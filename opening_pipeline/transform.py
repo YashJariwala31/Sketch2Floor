@@ -10,6 +10,7 @@ import json
 import cv2
 import numpy as np
 import math
+from pathlib import Path
 
 
 def rotate_points(points, angle_degrees):
@@ -370,80 +371,85 @@ def get_hinge_from_rotated_box(rotated_box):
 
 
 def place_single_door(template, detected, TEMPLATE_HEIGHT):
-    with open('transform_config.json') as f:
+    config_path = os.path.join(os.path.dirname(__file__), 'transform_config.json')
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
 
-    # ------- BASE CENTER -------
-    cx = float(detected['center_x'])
-    cy = float(detected['center_y'])
-
-    x = int(detected['x'])
-    y = int(detected['y'])
-    w = int(detected['width'])
-    h = int(detected['height'])
+    cx = float(detected.get('center_x'))
+    cy = float(detected.get('center_y'))
+    w = float(detected.get('width', 0))
+    h = float(detected.get('height', 0))
 
     door_width = min(w, h)
-    scale = float(door_width) / TEMPLATE_HEIGHT
+    scale = float(door_width) / float(TEMPLATE_HEIGHT)
 
-    rotated_box = detected['rotated_box']
+    rules = config['hinge_strategy']['bbox_rules']
+    orientation = detected.get('orientation')
+    if orientation not in rules:
+        orientation = 'horizontal' if float(w) >= float(h) else 'vertical'
+    rule = rules[orientation]
 
-    hinge = get_hinge_from_rotated_box(rotated_box)
+    hinge = np.array([
+        float(detected[rule['x']]),
+        float(detected[rule['y']])
+    ], dtype=float)
 
-    pts = np.array(rotated_box, dtype=float)
-    max_len = -1.0
-    direction = np.array([1.0, 0.0], dtype=float)
-    for i in range(4):
-        p1 = pts[i]
-        p2 = pts[(i + 1) % 4]
-        v = p2 - p1
-        length = float(np.linalg.norm(v))
-        if length > max_len:
-            max_len = length
-            if length > 0:
-                direction = v / length
+    rotation_deg = float(rule['rotation'])
 
-    to_center = np.array([cx - hinge[0], cy - hinge[1]], dtype=float)
-    if float(np.dot(direction, to_center)) < 0:
-        direction = -direction
+    walls = config.get('walls') or config.get('paths', {}).get('walls')
+    if isinstance(walls, str):
+        walls_path = Path(walls)
+        if not walls_path.is_absolute():
+            walls_path = Path(__file__).resolve().parent.parent / walls_path
+        if walls_path.exists():
+            with open(walls_path, 'r', encoding='utf-8') as f:
+                walls = json.load(f)
 
-    strike = hinge + direction * float(door_width)
+    if isinstance(walls, list) and walls and isinstance(walls[0], dict) and 'vertices' in walls[0]:
+        segs = []
+        sid = 0
+        for poly in walls:
+            verts = poly.get('vertices')
+            if not isinstance(verts, list) or len(verts) < 2:
+                continue
+            for i in range(len(verts)):
+                x1, y1 = verts[i]
+                x2, y2 = verts[(i + 1) % len(verts)]
+                segs.append({'id': sid, 'x1': float(x1), 'y1': float(y1), 'x2': float(x2), 'y2': float(y2)})
+                sid += 1
+        walls = segs
 
-    direction_angle = math.degrees(math.atan2(direction[1], direction[0]))
-    rotation_deg = direction_angle
+    wall = None
+    dist = float('inf')
+    if isinstance(walls, list):
+        wall, _proj, dist = find_nearest_wall(float(hinge[0]), float(hinge[1]), walls)
 
-    image_id = os.environ.get('IMAGE_ID')
-    mask_path = f'predictions/{image_id}_door.png' if image_id else None
-    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) if mask_path else None
+    max_dist = float(config.get('wall_snap', {}).get('max_distance', 0.0))
+    if wall is not None and dist < max_dist:
+        dx = float(wall['x2']) - float(wall['x1'])
+        dy = float(wall['y2']) - float(wall['y1'])
+        rotation_deg = float(math.degrees(math.atan2(dy, dx)) + 90.0)
 
-    if mask is not None:
-        crop = mask[y:y + h, x:x + w]
-        pts = np.column_stack(np.where(crop > 0))
-        if pts.shape[0] > 0:
-            pts[:, 0] += y
-            pts[:, 1] += x
-            distances = np.linalg.norm(pts - hinge[::-1], axis=1)
-            tip_idx = int(np.argmax(distances))
-            tip = np.array([pts[tip_idx][1], pts[tip_idx][0]], dtype=float)
-
-            AB = strike - hinge
-            AC = tip - hinge
-            cross = AB[0] * AC[1] - AB[1] * AC[0]
-            if cross < 0:
-                direction = -direction
-                strike = hinge + direction * float(door_width)
-                direction_angle = math.degrees(math.atan2(direction[1], direction[0]))
-                rotation_deg = direction_angle
-
-    # ------- TRANSFORM -------
     leaf_local = np.array(template['leaf'], dtype=float) * scale
-    arc_local  = np.array(template['arc'],  dtype=float) * scale
+    arc_local = np.array(template['arc'], dtype=float) * scale
+
+    dx = cx - float(hinge[0])
+    dy = cy - float(hinge[1])
+    if abs(dx) > abs(dy):
+        open_dir = 1 if dx > 0 else -1
+    else:
+        open_dir = 1 if dy > 0 else -1
+
+    if open_dir < 0:
+        leaf_local[:, 0] *= -1
+        arc_local[:, 0] *= -1
 
     leaf_world = rotate_points(leaf_local, rotation_deg) + hinge
-    arc_world  = rotate_points(arc_local,  rotation_deg) + hinge
+    arc_world = rotate_points(arc_local, rotation_deg) + hinge
 
     return {
-        'id':   detected['id'],
+        'id': detected['id'],
         'hinge': hinge.tolist(),
-        'leaf':  leaf_world.tolist(),
-        'arc':   arc_world.tolist()
+        'leaf': leaf_world.tolist(),
+        'arc': arc_world.tolist(),
     }

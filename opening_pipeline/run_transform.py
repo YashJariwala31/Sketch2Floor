@@ -7,10 +7,9 @@ hinge/leaf/arc coordinates.
 
 import os
 import json
-import cv2
 from pathlib import Path
 
-from opening_pipeline.transform import reconstruct_doors_3point
+from opening_pipeline.transform import place_single_door
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -39,40 +38,23 @@ def main():
     with open(template_path, "r") as f:
         template = json.load(f)
 
-    if not WALLS_PATH:
-        raise ValueError('transform_config.json must define paths.walls for 3-point reconstruction')
+    geometry_path = (ROOT_DIR / GEOMETRY_PATH) if not os.path.isabs(GEOMETRY_PATH) else Path(GEOMETRY_PATH)
+    with open(geometry_path, "r", encoding="utf-8") as f:
+        geometry = json.load(f)
 
-    walls_path = (ROOT_DIR / WALLS_PATH) if not os.path.isabs(WALLS_PATH) else Path(WALLS_PATH)
-    with open(walls_path, "r") as f:
-        wall_polygons = json.load(f)
+    walls = None
+    if WALLS_PATH:
+        walls_path = (ROOT_DIR / WALLS_PATH) if not os.path.isabs(WALLS_PATH) else Path(WALLS_PATH)
+        if walls_path.exists():
+            with open(walls_path, "r", encoding="utf-8") as f:
+                walls = json.load(f)
 
-    door_mask_path = ROOT_DIR / 'predictions' / f'{image_id}_door.png'
-    door_mask = cv2.imread(str(door_mask_path), cv2.IMREAD_GRAYSCALE)
-    if door_mask is None:
-        raise ValueError(f'Failed to read door mask: {door_mask_path}')
+    if walls is not None:
+        config['walls'] = walls
 
-    original_candidates = [
-        ROOT_DIR / 'original' / f'{image_id}.jpeg',
-        ROOT_DIR / 'original' / f'{image_id}.jpg',
-        ROOT_DIR / 'original' / f'{image_id}.png',
-    ]
-    original_img = None
-    for p in original_candidates:
-        original_img = cv2.imread(str(p))
-        if original_img is not None:
-            break
-
-    placed, debug = reconstruct_doors_3point(
-        template,
-        TEMPLATE_HEIGHT,
-        door_mask=door_mask,
-        wall_polygons=wall_polygons,
-        debug_image=original_img,
-    )
-
-    if debug is not None:
-        (ROOT_DIR / 'predictions').mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(ROOT_DIR / 'predictions' / f'debug_doors_{image_id}.png'), debug)
+    placed = []
+    for det in geometry.get('doors', []):
+        placed.append(place_single_door(template, det, TEMPLATE_HEIGHT))
 
     output_path = (ROOT_DIR / OUTPUT_PATH) if not os.path.isabs(OUTPUT_PATH) else Path(OUTPUT_PATH)
     with open(output_path, "w") as f:

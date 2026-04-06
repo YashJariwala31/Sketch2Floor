@@ -12,7 +12,15 @@
   },
 
   "hinge_strategy": {
-    "mode": "arc_based"
+    "mode": "bbox_based",
+    "bbox_rules": {
+      "horizontal": {"x": "x", "y": "center_y", "rotation": 0},
+      "vertical": {"x": "center_x", "y": "y", "rotation": 90}
+    }
+  },
+
+  "wall_snap": {
+    "max_distance": 15.0
   },
 
   "transform": {
