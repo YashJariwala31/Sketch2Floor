@@ -8,7 +8,13 @@ mask PNGs into `predictions/`.
 
 import argparse
 import os, cv2, torch, numpy as np
-import segmentation_models_pytorch as smp
+try:
+    import segmentation_models_pytorch as smp
+except ModuleNotFoundError as e:
+    raise SystemExit(
+        "Missing dependency: segmentation_models_pytorch. "
+        "Install it in your active environment, e.g. `python -m pip install segmentation-models-pytorch`."
+    ) from e
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -34,7 +40,7 @@ model = smp.Unet(
     classes=2
 ).to(device)
 
-model.load_state_dict(torch.load("fine_tuned_model.pth", map_location=device))
+model.load_state_dict(torch.load("models/fine_tuned_model.pth", map_location=device))
 model.eval()
 
 

@@ -46,6 +46,7 @@ if __name__ == '__main__':
         raise SystemExit('Usage: python overlay.py <image_id>')
 
     base_path = Path(__file__).resolve().parent
+    root_path = base_path.parent
     arg = sys.argv[1]
     input_path = Path(arg)
 
@@ -54,7 +55,7 @@ if __name__ == '__main__':
         image_id = input_path.stem
     else:
         image_id = arg
-        original_dir = base_path / 'original'
+        original_dir = root_path / 'original'
         candidates = [
             original_dir / f'{image_id}.jpeg',
             original_dir / f'{image_id}.jpg',
@@ -62,8 +63,8 @@ if __name__ == '__main__':
         ]
         image_path = next((p for p in candidates if p.exists() and p.is_file()), candidates[0])
 
-    placed_path = base_path / 'placed_doors.json'
-    out_path = base_path / 'predictions' / f'overlay_{image_id}.png'
+    placed_path = root_path / 'placed_doors.json'
+    out_path = root_path / 'predictions' / f'overlay_{image_id}.png'
 
     output = draw_doors(str(image_path), str(placed_path))
     if output is None:
