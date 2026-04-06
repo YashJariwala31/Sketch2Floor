@@ -1,0 +1,24 @@
+{
+  "paths": {
+    "template": "output.json",
+    "geometry": "predictions/{IMAGE}_geometry.json",
+    "output": "placed_doors.json",
+    "walls": "C:/Users/yashj/Desktop/Sketch2FloorPlan/data/intermediate/wall_polygons.json"
+  },
+
+  "template": {
+    "height": 30.0,
+    "origin": "hinge"
+  },
+
+  "hinge_strategy": {
+    "mode": "arc_based"
+  },
+
+  "transform": {
+    "order": ["scale", "rotate", "translate"],
+    "scale_source": "height"
+  },
+
+  "apply_on": ["leaf", "arc"]
+}

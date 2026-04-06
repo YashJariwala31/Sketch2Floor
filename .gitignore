@@ -1,0 +1,63 @@
+# =========================
+# PYTHON
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# =========================
+# MODEL FILES (DO NOT TRACK)
+# =========================
+*.pth
+*.pt
+*.h5
+*.ckpt
+
+# =========================
+# DATA & OUTPUTS (GENERATED)
+# =========================
+predictions/
+original/
+outputs/
+data/
+
+
+# =========================
+# BUILD / DISTRIBUTION
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# LOGS
+# =========================
+*.log
+
+# =========================
+# IDE / EDITOR
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS FILES
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# JUPYTER (if used later)
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# CACHE / TEMP
+# =========================
+*.tmp
+*.cache
