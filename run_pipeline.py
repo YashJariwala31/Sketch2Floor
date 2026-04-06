@@ -87,4 +87,21 @@ subprocess.run([python, '-m', 'opening_pipeline.run_transform'], check=True, env
 print('[STEP 5] Overlay...')
 subprocess.run([python, '-m', 'opening_pipeline.overlay', image_id], check=True)
 
+print('[STEP 6] Fuse walls + doors...')
+fused_out = ROOT_DIR / 'intermediate' / 'floorplan_fused.json'
+subprocess.run(
+    [
+        python,
+        '-m',
+        'utils.floorplan_fusion',
+        '--walls',
+        str(wall_dst),
+        '--doors',
+        str(ROOT_DIR / 'placed_doors.json'),
+        '--out',
+        str(fused_out),
+    ],
+    check=True,
+)
+
 print('DONE')
