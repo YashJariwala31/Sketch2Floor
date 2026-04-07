@@ -575,18 +575,35 @@ def process_walls():
 # =============================================================================
 
 def save_wall_polygons(polygons: List[WallPolygon], output_path=None):
-    """Save wall polygons to JSON file."""
+    """Save wall polygons to JSON file, upscaled to original image coordinates."""
     if output_path is None:
         output_path = os.path.join("data", "intermediate", "wall_polygons.json")
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
+    # Load scale factors to restore original coordinate space
+    try:
+        scale_path = os.path.join("data", "intermediate", "scale_factors.json")
+        with open(scale_path, 'r') as sf:
+            factors = json.load(sf)
+        sx = float(factors.get("scale_x", 1.0))
+        sy = float(factors.get("scale_y", 1.0))
+        print(f"Loaded scale factors: sx={sx:.4f}, sy={sy:.4f}")
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        sx, sy = 1.0, 1.0
+        print("Scale factors not found – using identity (1.0, 1.0)")
+    
     data = []
     for i, polygon in enumerate(polygons):
+        # Upscale vertex coordinates to original image dimensions
+        upscaled_vertices = [
+            (v[0] * sx, v[1] * sy) for v in polygon.vertices
+        ]
+        upscaled_area = round(polygon.area * (sx * sy), 1)
         data.append({
             "wall_id": i,
-            "vertices": polygon.vertices,
-            "area_px": round(polygon.area, 1)
+            "vertices": upscaled_vertices,
+            "area_px": upscaled_area
         })
     
     with open(output_path, 'w') as f:

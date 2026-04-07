@@ -2,6 +2,7 @@
 
 import sys
 import os
+import json
 import numpy as np
 import cv2
 
@@ -81,6 +82,8 @@ def main():
     original_shape = image.shape
     original_dtype = image.dtype
     h, w = image.shape[:2]
+    scale_x = 1.0
+    scale_y = 1.0
     if max(h, w) > 2000:
         if h > w:
             new_h = 2000
@@ -88,8 +91,11 @@ def main():
         else:
             new_w = 2000
             new_h = int(h * 2000 / w)
+        scale_x = w / new_w
+        scale_y = h / new_h
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         print(f"Resized image to: {image.shape[1]}x{image.shape[0]}")
+        print(f"Scale factors: scale_x={scale_x:.4f}, scale_y={scale_y:.4f}")
     
     # Task 2: Convert to grayscale
     # Grayscale conversion: gray = 0.299*R + 0.587*G + 0.114*B
@@ -153,6 +159,13 @@ def main():
     else:
         print(f"\nError: Could not save grayscale image to {output_path}")
     
+    # Save scale factors for downstream pipeline stages
+    scale_factors_path = os.path.join("data", "intermediate", "scale_factors.json")
+    os.makedirs(os.path.dirname(scale_factors_path), exist_ok=True)
+    with open(scale_factors_path, 'w') as sf:
+        json.dump({"scale_x": scale_x, "scale_y": scale_y}, sf, indent=2)
+    print(f"\nScale factors saved to: {scale_factors_path}")
+
     print("\nStage 0 completed successfully!")
 
 

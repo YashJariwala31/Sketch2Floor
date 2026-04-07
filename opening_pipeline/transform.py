@@ -424,11 +424,12 @@ def place_single_door(template, detected, TEMPLATE_HEIGHT):
     if isinstance(walls, list):
         wall, _proj, dist = find_nearest_wall(float(hinge[0]), float(hinge[1]), walls)
 
-    max_dist = float(config.get('wall_snap', {}).get('max_distance', 0.0))
-    if wall is not None and dist < max_dist:
+    max_dist = float(config.get('wall_snap', {}).get('max_distance', 15.0))
+    dynamic_max_dist = max_dist * (door_width / TEMPLATE_HEIGHT)
+    if wall is not None and dist < dynamic_max_dist:
         dx = float(wall['x2']) - float(wall['x1'])
         dy = float(wall['y2']) - float(wall['y1'])
-        rotation_deg = float(math.degrees(math.atan2(dy, dx)) + 90.0)
+        rotation_deg = float(math.degrees(math.atan2(dy, dx)))
 
     leaf_local = np.array(template['leaf'], dtype=float) * scale
     arc_local = np.array(template['arc'], dtype=float) * scale
