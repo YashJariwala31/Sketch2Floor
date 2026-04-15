@@ -3,7 +3,8 @@
     "template": "opening_pipeline/output.json",
     "geometry": "predictions/{IMAGE}_geometry.json",
     "output": "placed_doors.json",
-    "walls": "intermediate/wall_polygons.json"
+    "walls": "intermediate/wall_polygons.json",
+    "rooms": "intermediate/room_polygons.json"
   },
 
   "template": {

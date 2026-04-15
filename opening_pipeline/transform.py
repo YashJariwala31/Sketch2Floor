@@ -370,7 +370,49 @@ def get_hinge_from_rotated_box(rotated_box):
     return hinge_point
 
 
-def place_single_door(template, detected, TEMPLATE_HEIGHT):
+def _find_door_room_center(door_x, door_y, room_polygons):
+    """Assign a door to its containing/nearest room and return the room centroid.
+
+    Steps:
+      1. Build contours from room polygon vertices.
+      2. For each room, check pointPolygonTest (inside = dist >= 0).
+      3. If inside a room, compute and return its centroid.
+      4. If not inside any room, pick the closest room.
+      5. Return None if no rooms at all.
+    """
+    if not room_polygons:
+        return None
+
+    best_room_cnt = None
+    best_dist = float('inf')
+
+    for room in room_polygons:
+        poly = room.get('polygon')
+        if not poly or len(poly) < 3:
+            continue
+        cnt = np.array(poly, dtype=np.float32).reshape(-1, 1, 2)
+        dist = cv2.pointPolygonTest(cnt, (float(door_x), float(door_y)), True)
+        if dist >= 0:
+            # Door is inside this room
+            best_room_cnt = cnt
+            break
+        # Track closest room (dist is negative = outside, less negative = closer)
+        if abs(dist) < best_dist:
+            best_dist = abs(dist)
+            best_room_cnt = cnt
+
+    if best_room_cnt is None:
+        return None
+
+    M = cv2.moments(best_room_cnt)
+    if M['m00'] < 1e-6:
+        return None
+    cx = float(M['m10'] / M['m00'])
+    cy = float(M['m01'] / M['m00'])
+    return (cx, cy)
+
+
+def place_single_door(template, detected, TEMPLATE_HEIGHT, *, room_polygons=None, image_width=None, image_height=None):
     config_path = os.path.join(os.path.dirname(__file__), 'transform_config.json')
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
@@ -426,24 +468,77 @@ def place_single_door(template, detected, TEMPLATE_HEIGHT):
 
     max_dist = float(config.get('wall_snap', {}).get('max_distance', 15.0))
     dynamic_max_dist = max_dist * (door_width / TEMPLATE_HEIGHT)
+
+    # -------------------------------------------------------------------
+    # Wall-normal + room-center orientation logic
+    # -------------------------------------------------------------------
     if wall is not None and dist < dynamic_max_dist:
-        dx = float(wall['x2']) - float(wall['x1'])
-        dy = float(wall['y2']) - float(wall['y1'])
-        rotation_deg = float(math.degrees(math.atan2(dy, dx)))
+        # Step 1: Compute wall direction vector
+        wdx = float(wall['x2']) - float(wall['x1'])
+        wdy = float(wall['y2']) - float(wall['y1'])
+
+        # Step 2: Compute perpendicular normal (rotated 90° CCW)
+        nx = -wdy
+        ny = wdx
+        nlen = math.sqrt(nx * nx + ny * ny)
+        if nlen > 1e-9:
+            nx /= nlen
+            ny /= nlen
+
+            # Step 3: Find room center for this door
+            room_center = _find_door_room_center(float(hinge[0]), float(hinge[1]), room_polygons)
+
+            if room_center is not None:
+                center_x, center_y = room_center
+            elif image_width is not None and image_height is not None:
+                # Fallback: image center
+                center_x = float(image_width) / 2.0
+                center_y = float(image_height) / 2.0
+            else:
+                center_x, center_y = cx, cy
+
+            # Step 4: Dot product — flip normal toward room interior
+            vec_x = center_x - float(hinge[0])
+            vec_y = center_y - float(hinge[1])
+            dot = nx * vec_x + ny * vec_y
+
+            if dot < 0:
+                nx = -nx
+                ny = -ny
+
+            # Step 5: Door angle from inward-facing normal, snapped to 90°
+            door_angle_rad = math.atan2(ny, nx)
+            door_angle_deg = math.degrees(door_angle_rad)
+            rotation_deg = round(door_angle_deg / 90.0) * 90.0
 
     leaf_local = np.array(template['leaf'], dtype=float) * scale
     arc_local = np.array(template['arc'], dtype=float) * scale
 
-    dx = cx - float(hinge[0])
-    dy = cy - float(hinge[1])
-    if abs(dx) > abs(dy):
-        open_dir = 1 if dx > 0 else -1
+    # Open-direction: cross product of wall direction × hinge→door-center
+    if wall is not None and dist < dynamic_max_dist:
+        wdx = float(wall['x2']) - float(wall['x1'])
+        wdy = float(wall['y2']) - float(wall['y1'])
+        wlen = math.sqrt(wdx * wdx + wdy * wdy)
+        if wlen > 1e-9:
+            wdx /= wlen
+            wdy /= wlen
+        hinge_to_center_x = cx - float(hinge[0])
+        hinge_to_center_y = cy - float(hinge[1])
+        cross = wdx * hinge_to_center_y - wdy * hinge_to_center_x
+        if cross < 0:
+            leaf_local[:, 0] *= -1
+            arc_local[:, 0] *= -1
     else:
-        open_dir = 1 if dy > 0 else -1
-
-    if open_dir < 0:
-        leaf_local[:, 0] *= -1
-        arc_local[:, 0] *= -1
+        # Fallback: original heuristic
+        dx = cx - float(hinge[0])
+        dy = cy - float(hinge[1])
+        if abs(dx) > abs(dy):
+            open_dir = 1 if dx > 0 else -1
+        else:
+            open_dir = 1 if dy > 0 else -1
+        if open_dir < 0:
+            leaf_local[:, 0] *= -1
+            arc_local[:, 0] *= -1
 
     leaf_world = rotate_points(leaf_local, rotation_deg) + hinge
     arc_world = rotate_points(arc_local, rotation_deg) + hinge
@@ -454,3 +549,4 @@ def place_single_door(template, detected, TEMPLATE_HEIGHT):
         'leaf': leaf_world.tolist(),
         'arc': arc_world.tolist(),
     }
+

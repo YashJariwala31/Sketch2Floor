@@ -53,6 +53,13 @@ if not wall_src.exists():
     raise FileNotFoundError(f'Wall polygons not generated: {wall_src}')
 shutil.copyfile(wall_src, wall_dst)
 
+room_src = ROOT_DIR / 'wall_pipeline' / 'data' / 'intermediate' / 'room_polygons.json'
+room_dst = ROOT_DIR / 'intermediate' / 'room_polygons.json'
+if room_src.exists():
+    shutil.copyfile(room_src, room_dst)
+else:
+    print('[WARN] Room polygons not found, door orientation may be less accurate')
+
 print('[STEP 2] Running detection...')
 subprocess.run([python, '-m', 'opening_pipeline.test_final', '--image', str(image_path)], check=True)
 

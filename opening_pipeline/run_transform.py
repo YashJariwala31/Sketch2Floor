@@ -52,9 +52,30 @@ def main():
     if walls is not None:
         config['walls'] = walls
 
+    # Load room polygons for per-room door orientation
+    rooms_path_cfg = config.get("paths", {}).get("rooms")
+    room_polygons = None
+    if rooms_path_cfg:
+        rp = (ROOT_DIR / rooms_path_cfg) if not os.path.isabs(rooms_path_cfg) else Path(rooms_path_cfg)
+        if rp.exists():
+            with open(rp, "r", encoding="utf-8") as f:
+                room_polygons = json.load(f)
+            print(f"[INFO] Loaded {len(room_polygons)} room polygons for door orientation")
+        else:
+            print(f"[WARN] Room polygons not found at {rp}, using fallback orientation")
+
+    # Extract image dimensions for fallback orientation
+    img_w = geometry.get('image_width')
+    img_h = geometry.get('image_height')
+
     placed = []
     for det in geometry.get('doors', []):
-        placed.append(place_single_door(template, det, TEMPLATE_HEIGHT))
+        placed.append(place_single_door(
+            template, det, TEMPLATE_HEIGHT,
+            room_polygons=room_polygons,
+            image_width=img_w,
+            image_height=img_h,
+        ))
 
     output_path = (ROOT_DIR / OUTPUT_PATH) if not os.path.isabs(OUTPUT_PATH) else Path(OUTPUT_PATH)
     with open(output_path, "w") as f:
