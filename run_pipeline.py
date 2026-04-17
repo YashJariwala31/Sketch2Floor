@@ -92,7 +92,7 @@ env['IMAGE_ID'] = image_id
 subprocess.run([python, '-m', 'opening_pipeline.run_transform'], check=True, env=env)
 
 print('[STEP 5] Overlay...')
-subprocess.run([python, '-m', 'opening_pipeline.overlay', image_id], check=True)
+subprocess.run([python, '-m', 'opening_pipeline.overlay', str(image_path)], check=True)
 
 print('[STEP 6] Fuse walls + doors...')
 fused_out = ROOT_DIR / 'intermediate' / 'floorplan_fused.json'

@@ -1,0 +1,35 @@
+from django.db import models
+
+
+class FloorplanJob(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Draft'
+        QUEUED = 'queued', 'Queued'
+        PROCESSING = 'processing', 'Processing'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+
+    name = models.CharField(max_length=120, blank=True)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
+    original_image = models.ImageField(upload_to='uploads/originals/', blank=True, null=True)
+    original_filename = models.CharField(max_length=255, blank=True)
+
+    door_mask_path = models.CharField(max_length=255, blank=True)
+    window_mask_path = models.CharField(max_length=255, blank=True)
+    geometry_path = models.CharField(max_length=255, blank=True)
+    overlay_path = models.CharField(max_length=255, blank=True)
+    combined_overlay_path = models.CharField(max_length=255, blank=True)
+    wall_polygons_path = models.CharField(max_length=255, blank=True)
+    room_polygons_path = models.CharField(max_length=255, blank=True)
+    fused_floorplan_path = models.CharField(max_length=255, blank=True)
+
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name or f'FloorplanJob #{self.pk}'

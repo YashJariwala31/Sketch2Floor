@@ -10,6 +10,12 @@ __pycache__/
 venv/
 env/
 
+# Environment files
+.env
+.env.*
+!.env.example
+!backend/.env.example
+
 # =========================
 # MODEL FILES (DO NOT TRACK)
 # =========================
@@ -26,6 +32,12 @@ original/
 intermediate/
 outputs/
 data/
+backend/media/
+backend/staticfiles/
+backend/db.sqlite3
+mobile/.expo/
+mobile/.expo-shared/
+mobile/node_modules/
 
 placed_doors.json
 opening_pipeline/placed_doors.json
@@ -48,6 +60,9 @@ dist/
 # LOGS
 # =========================
 *.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
 # =========================
 # IDE / EDITOR
@@ -71,3 +86,14 @@ Thumbs.db
 # =========================
 *.tmp
 *.cache
+node_modules
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# APP BUILDS
+# =========================
+mobile/android/
+mobile/ios/

@@ -745,13 +745,13 @@ def validate_topology(nodes, edges):
     
     if issues:
         print()
-        print("  ⚠ WARNING: Graph is not topologically closed!")
+        print("  [WARN] Graph is not topologically closed!")
         for issue in issues:
             print(f"    - {issue}")
         print("  Rooms may not be detected correctly.")
     else:
         print()
-        print("  ✓ Graph topology looks good for room detection.")
+        print("  [OK] Graph topology looks good for room detection.")
     
     print("=" * 55)
     

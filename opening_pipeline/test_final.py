@@ -7,7 +7,12 @@ mask PNGs into `predictions/`.
 """
 
 import argparse
-import os, cv2, torch, numpy as np
+import os
+
+import cv2
+import numpy as np
+import torch
+
 try:
     import segmentation_models_pytorch as smp
 except ModuleNotFoundError as e:
@@ -22,9 +27,9 @@ print("Using device:", device)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--image', type=str, default=None)
-parser.add_argument('--door_thresh', type=float, default=0.85)
-parser.add_argument('--window_thresh', type=float, default=0.85)
+parser.add_argument("--image", type=str, default=None)
+parser.add_argument("--door_thresh", type=float, default=0.85)
+parser.add_argument("--window_thresh", type=float, default=0.85)
 args = parser.parse_args()
 
 
@@ -37,7 +42,7 @@ model = smp.Unet(
     encoder_name="resnet18",
     encoder_weights=None,
     in_channels=3,
-    classes=2
+    classes=2,
 ).to(device)
 
 model.load_state_dict(torch.load("models/fine_tuned_model.pth", map_location=device))
@@ -76,15 +81,12 @@ for filepath in filepaths:
     print("Door max:", pred[0].max())
     print("Window max:", pred[1].max())
 
-    # ---------------- SMART THRESHOLD ----------------
     door = (pred[0] > float(args.door_thresh)).astype(np.uint8) * 255
     window = (pred[1] > float(args.window_thresh)).astype(np.uint8) * 255
 
-    # ---------------- BREAK MERGED WINDOWS ----------------
     kernel = np.ones((3, 3), np.uint8)
     window = cv2.morphologyEx(window, cv2.MORPH_OPEN, kernel)
 
-    # ---------------- SPLIT OBJECTS ----------------
     num, labels = cv2.connectedComponents(window)
     clean = np.zeros_like(window)
 
@@ -92,12 +94,11 @@ for filepath in filepaths:
         comp = (labels == i).astype(np.uint8) * 255
         area = cv2.countNonZero(comp)
 
-        if 50 < area < 5000:   # tune if needed
+        if 50 < area < 5000:
             clean = cv2.bitwise_or(clean, comp)
 
     window = clean
 
-    # ---------------- RESIZE BACK ----------------
     door = cv2.resize(door, (w, h))
     window = cv2.resize(window, (w, h))
 
@@ -106,4 +107,4 @@ for filepath in filepaths:
     cv2.imwrite(f"{OUTPUT_DIR}/{stem}_window.png", window)
 
 
-print("\n✅ Done")
+print("\nDone")
