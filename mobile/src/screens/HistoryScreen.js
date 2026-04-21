@@ -4,8 +4,7 @@ import JobCard from '../components/JobCard';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
-  { key: 'completed', label: 'Ready' },
-  { key: 'processing', label: 'Live' },
+  { key: 'completed', label: 'Saved' },
   { key: 'failed', label: 'Issues' },
 ];
 
@@ -22,18 +21,10 @@ export default function HistoryScreen({ jobs, loading, error, onSelectJob, onDel
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>Library</Text>
-          <Text style={styles.subtitle}>Saved scans</Text>
-        </View>
+      <Text style={styles.title}>History</Text>
+      <Text style={styles.subtitle}>Previous conversions</Text>
 
-        <View style={styles.countPill}>
-          <Text style={styles.countText}>{jobs.length}</Text>
-        </View>
-      </View>
-
-      <View style={styles.filterRail}>
+      <View style={styles.filterRow}>
         {FILTERS.map((item) => {
           const active = item.key === filter;
           return (
@@ -44,13 +35,13 @@ export default function HistoryScreen({ jobs, loading, error, onSelectJob, onDel
         })}
       </View>
 
-      {loading ? <Text style={styles.message}>Loading...</Text> : null}
+      {loading ? <Text style={styles.message}>Loading history...</Text> : null}
       {error ? <Text style={[styles.message, styles.error]}>{error}</Text> : null}
 
       {!loading && !error && visibleJobs.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No scans</Text>
-          <Text style={styles.emptyText}>Capture one to start.</Text>
+          <Text style={styles.emptyTitle}>No floor plans yet</Text>
+          <Text style={styles.emptyText}>Your completed scans will appear here.</Text>
         </View>
       ) : null}
 
@@ -59,7 +50,6 @@ export default function HistoryScreen({ jobs, loading, error, onSelectJob, onDel
           key={job.id}
           job={job}
           theme={theme}
-          isLandscape={isLandscape}
           onPress={() => onSelectJob(job)}
           onDelete={() =>
             Alert.alert('Delete project', 'Remove this floorplan project permanently?', [
@@ -76,100 +66,75 @@ export default function HistoryScreen({ jobs, loading, error, onSelectJob, onDel
 function createStyles(theme, isLandscape) {
   return StyleSheet.create({
     content: {
-      paddingBottom: 34,
-    },
-    headerRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      marginBottom: 18,
+      paddingBottom: 30,
     },
     title: {
       color: theme.colors.text,
-      fontSize: isLandscape ? 34 : 31,
+      fontSize: isLandscape ? 32 : 30,
       fontWeight: '900',
-      letterSpacing: -1,
+      letterSpacing: -0.9,
     },
     subtitle: {
       marginTop: 6,
       color: theme.colors.muted,
-      fontWeight: '700',
+      fontWeight: '600',
+      marginBottom: 18,
     },
-    countPill: {
-      minWidth: 42,
-      height: 42,
-      paddingHorizontal: 12,
-      borderRadius: 21,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.panel,
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-    },
-    countText: {
-      color: theme.colors.text,
-      fontWeight: '900',
-      fontSize: 16,
-    },
-    filterRail: {
+    filterRow: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
       gap: 10,
-      marginBottom: 20,
-      padding: 8,
-      borderRadius: 22,
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      ...theme.shadow.soft,
+      marginBottom: 18,
     },
     filterPill: {
       paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: theme.radius.pill,
-      backgroundColor: 'transparent',
-    },
-    filterPillActive: {
-      backgroundColor: theme.colors.panel,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: theme.colors.surfaceElevated,
       borderWidth: 1,
       borderColor: theme.colors.borderStrong,
     },
+    filterPillActive: {
+      backgroundColor: theme.colors.heroTint,
+      borderColor: theme.colors.noticeBorder,
+    },
     filterText: {
-      color: theme.colors.softText,
-      fontWeight: '800',
+      color: theme.colors.muted,
+      fontWeight: '700',
+      fontSize: 13,
     },
     filterTextActive: {
-      color: theme.colors.text,
+      color: theme.colors.accent,
     },
     message: {
       color: theme.colors.muted,
-      marginBottom: theme.spacing.md,
+      marginBottom: 16,
+      fontWeight: '700',
     },
     error: {
       color: theme.colors.danger,
     },
     emptyState: {
-      minHeight: 260,
-      borderRadius: theme.radius.xl,
-      backgroundColor: theme.colors.surface,
+      minHeight: 220,
+      borderRadius: 24,
+      backgroundColor: theme.colors.surfaceElevated,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.colors.borderStrong,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 10,
-      marginBottom: theme.spacing.md,
-      overflow: 'hidden',
-      ...theme.shadow.card,
+      paddingHorizontal: 22,
+      ...theme.shadow.soft,
     },
     emptyTitle: {
       color: theme.colors.text,
-      fontSize: 24,
-      fontWeight: '900',
-      letterSpacing: -0.6,
+      fontSize: 23,
+      fontWeight: '800',
+      textAlign: 'center',
     },
     emptyText: {
+      marginTop: 8,
       color: theme.colors.muted,
-      fontWeight: '700',
+      textAlign: 'center',
+      fontWeight: '600',
     },
   });
 }

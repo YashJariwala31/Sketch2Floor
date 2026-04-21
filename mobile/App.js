@@ -16,10 +16,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AuthScreen from './src/screens/AuthScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
-import LandingScreen from './src/screens/LandingScreen';
 import HomeScreen from './src/screens/HomeScreen';
+import LandingScreen from './src/screens/LandingScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ResultsScreen from './src/screens/ResultsScreen';
+import UploadCaptureScreen from './src/screens/UploadCaptureScreen';
 import { createJobWithImage, deleteJob, fetchJobs, startJob, testBackendConnection } from './src/api/client';
 import { getTheme } from './src/theme';
 import { saveImageToDevice } from './src/utils/saveImageToDevice';
@@ -30,6 +31,11 @@ const TABS = {
   PROFILE: 'profile',
 };
 
+const HOME_VIEWS = {
+  MAIN: 'main',
+  UPLOAD: 'upload',
+};
+
 const AUTH_ROUTES = {
   LANDING: 'landing',
   LOGIN: 'login',
@@ -37,8 +43,8 @@ const AUTH_ROUTES = {
 };
 
 const TAB_META = {
-  [TABS.HOME]: { label: 'Studio', icon: 'scan-outline', activeIcon: 'scan' },
-  [TABS.HISTORY]: { label: 'Library', icon: 'layers-outline', activeIcon: 'layers' },
+  [TABS.HOME]: { label: 'Home', icon: 'home-outline', activeIcon: 'home' },
+  [TABS.HISTORY]: { label: 'History', icon: 'time-outline', activeIcon: 'time' },
   [TABS.PROFILE]: { label: 'Profile', icon: 'person-outline', activeIcon: 'person' },
 };
 
@@ -48,14 +54,14 @@ function TabButton({ active, tab, onPress, theme }) {
 
   return (
     <Pressable style={[styles.tabButton, active ? styles.tabButtonActive : null]} onPress={onPress}>
-      <Ionicons name={active ? meta.activeIcon : meta.icon} size={19} color={active ? theme.colors.text : theme.colors.softText} />
+      <Ionicons name={active ? meta.activeIcon : meta.icon} size={19} color={active ? theme.colors.accent : theme.colors.softText} />
       <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>{meta.label}</Text>
     </Pressable>
   );
 }
 
 export default function App() {
-  const theme = useMemo(() => getTheme('light'), []);
+  const theme = useMemo(() => getTheme(), []);
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const styles = useMemo(() => createStyles(theme, isLandscape), [theme, isLandscape]);
@@ -65,8 +71,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [activeTab, setActiveTab] = useState(TABS.HOME);
+  const [homeView, setHomeView] = useState(HOME_VIEWS.MAIN);
   const [connection, setConnection] = useState(null);
   const [session, setSession] = useState(null);
   const [authRoute, setAuthRoute] = useState(AUTH_ROUTES.LANDING);
@@ -74,11 +80,13 @@ export default function App() {
   async function refreshConnection(showSuccess = false) {
     const result = await testBackendConnection();
     setConnection(result);
+
     if (!result.ok) {
       setError(result.error || 'Unable to reach backend');
     } else if (showSuccess) {
-      setNotice('Connected');
+      Alert.alert('Connection looks good', 'The backend is reachable.');
     }
+
     return result;
   }
 
@@ -110,11 +118,13 @@ export default function App() {
       loadJobs();
       return;
     }
+
     setJobs([]);
     setSelectedJob(null);
     setLoading(false);
     setError('');
-    setNotice('');
+    setActiveTab(TABS.HOME);
+    setHomeView(HOME_VIEWS.MAIN);
   }, [session]);
 
   useEffect(() => {
@@ -127,7 +137,7 @@ export default function App() {
     }, 4000);
 
     return () => clearInterval(intervalId);
-  }, [selectedJob]);
+  }, [session, selectedJob]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -142,19 +152,27 @@ export default function App() {
         }
         return false;
       }
+
       if (selectedJob) {
         setSelectedJob(null);
         return true;
       }
+
+      if (activeTab === TABS.HOME && homeView === HOME_VIEWS.UPLOAD) {
+        setHomeView(HOME_VIEWS.MAIN);
+        return true;
+      }
+
       if (activeTab !== TABS.HOME) {
         setActiveTab(TABS.HOME);
         return true;
       }
+
       return false;
     });
 
     return () => subscription.remove();
-  }, [activeTab, selectedJob, session, authRoute]);
+  }, [activeTab, authRoute, homeView, selectedJob, session]);
 
   async function uploadCapturedSketch({
     imageUri,
@@ -162,16 +180,12 @@ export default function App() {
     mimeType,
     name,
     description,
-    uploadingNotice,
-    successNotice,
-    successTitle,
-    successMessage,
     failureMessage,
   }) {
     try {
       setBusy(true);
       setError('');
-      setNotice(uploadingNotice);
+
       const created = await createJobWithImage({
         name,
         description,
@@ -180,14 +194,19 @@ export default function App() {
         mimeType,
       });
 
-      setSelectedJob(created);
+      let nextJob = created;
+      try {
+        nextJob = await startJob(created.id);
+      } catch (startError) {
+        setError(startError.message || 'Uploaded, but could not start processing');
+      }
+
+      setSelectedJob(nextJob);
       setActiveTab(TABS.HISTORY);
-      setNotice(successNotice);
-      Alert.alert(successTitle, successMessage);
+      setHomeView(HOME_VIEWS.MAIN);
       await loadJobs();
     } catch (err) {
       setError(err.message || failureMessage);
-      setNotice('');
       Alert.alert('Upload failed', err.message || failureMessage);
     } finally {
       setBusy(false);
@@ -198,11 +217,10 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Opening camera...');
+
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', 'Please allow camera access.');
-        setNotice('');
         return;
       }
 
@@ -213,7 +231,6 @@ export default function App() {
       });
 
       if (result.canceled || !result.assets?.length) {
-        setNotice('');
         return;
       }
 
@@ -224,15 +241,10 @@ export default function App() {
         mimeType: asset.mimeType || 'image/jpeg',
         name: 'New floorplan scan',
         description: 'Captured from camera',
-        uploadingNotice: 'Uploading...',
-        successNotice: 'Uploaded',
-        successTitle: 'Upload complete',
-        successMessage: 'Your sketch was added.',
         failureMessage: 'Unable to upload image',
       });
     } catch (err) {
       setError(err.message || 'Unable to open camera');
-      setNotice('');
       Alert.alert('Camera failed', err.message || 'Unable to open camera.');
     } finally {
       setBusy(false);
@@ -243,11 +255,10 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Opening photos...');
+
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', 'Please allow photo access.');
-        setNotice('');
         return;
       }
 
@@ -257,7 +268,6 @@ export default function App() {
       });
 
       if (result.canceled || !result.assets?.length) {
-        setNotice('');
         return;
       }
 
@@ -268,15 +278,10 @@ export default function App() {
         mimeType: asset.mimeType || 'image/jpeg',
         name: 'Imported floorplan',
         description: 'Imported from phone',
-        uploadingNotice: 'Uploading...',
-        successNotice: 'Imported',
-        successTitle: 'Upload complete',
-        successMessage: 'Your sketch was added.',
         failureMessage: 'Unable to import image',
       });
     } catch (err) {
       setError(err.message || 'Unable to import image');
-      setNotice('');
       Alert.alert('Upload failed', err.message || 'Unable to import image.');
     } finally {
       setBusy(false);
@@ -290,13 +295,11 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Starting...');
       const started = await startJob(job.id);
       setSelectedJob(started);
       await loadJobs();
     } catch (err) {
       setError(err.message || 'Unable to start job');
-      setNotice('');
       Alert.alert('Could not start', err.message || 'Unable to start job.');
     } finally {
       setBusy(false);
@@ -311,16 +314,15 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Deleting...');
       await deleteJob(job.id);
+
       if (selectedJob?.id === job.id) {
         setSelectedJob(null);
       }
-      setNotice('Deleted');
+
       await loadJobs();
     } catch (err) {
       setError(err.message || 'Unable to delete job');
-      setNotice('');
       Alert.alert('Delete failed', err.message || 'Unable to delete job.');
     } finally {
       setBusy(false);
@@ -331,12 +333,10 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Preparing download...');
-      const result = await saveImageToDevice(url, 'Sketch2FloorPlan');
-      setNotice(result.message || 'Downloaded');
+      await saveImageToDevice(url, 'Sketch2FloorPlan');
+      Alert.alert('Saved', 'The floor plan was sent to your device storage.');
     } catch (err) {
       setError(err.message || 'Unable to prepare download');
-      setNotice('');
       Alert.alert('Download failed', err.message || 'Unable to prepare download.');
     } finally {
       setBusy(false);
@@ -349,8 +349,8 @@ export default function App() {
       name: authValues.fullName || authValues.email.split('@')[0],
     });
     setActiveTab(TABS.HOME);
+    setHomeView(HOME_VIEWS.MAIN);
     setSelectedJob(null);
-    setNotice('Welcome back');
     setError('');
     setAuthRoute(AUTH_ROUTES.LANDING);
   }
@@ -359,6 +359,7 @@ export default function App() {
     setSession(null);
     setConnection(null);
     setActiveTab(TABS.HOME);
+    setHomeView(HOME_VIEWS.MAIN);
   }
 
   function renderCurrentScreen() {
@@ -423,42 +424,50 @@ export default function App() {
       );
     }
 
-    return <HomeScreen busy={busy} onUploadImage={handleUploadImage} onPickFromGallery={handlePickFromGallery} theme={theme} isLandscape={isLandscape} />;
+    if (homeView === HOME_VIEWS.UPLOAD) {
+      return (
+        <UploadCaptureScreen
+          busy={busy}
+          onPickFromGallery={handlePickFromGallery}
+          onOpenCamera={handleUploadImage}
+          onBack={() => setHomeView(HOME_VIEWS.MAIN)}
+          theme={theme}
+          isLandscape={isLandscape}
+        />
+      );
+    }
+
+    return (
+      <HomeScreen
+        busy={busy}
+        onOpenUploadScreen={() => setHomeView(HOME_VIEWS.UPLOAD)}
+        onCaptureImage={handleUploadImage}
+        theme={theme}
+        isLandscape={isLandscape}
+      />
+    );
   }
 
   return (
     <SafeAreaProvider>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-        <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.colors.background} />
-        <ExpoStatusBar style={theme.isDark ? 'light' : 'dark'} />
+        <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
+        <ExpoStatusBar style="dark" />
 
         <View style={styles.container}>
-          {session && !selectedJob ? (
-            <View style={styles.header}>
-              <Text style={styles.brand}>Sketch2FloorPlan</Text>
-              <Pressable style={styles.profileButton} onPress={() => setActiveTab(TABS.PROFILE)}>
-                <Ionicons name="person-outline" size={19} color={theme.colors.text} />
-              </Pressable>
-            </View>
-          ) : null}
-
-          {notice && session && !selectedJob ? (
-            <View style={styles.noticeBanner}>
-              <Text style={styles.noticeText}>{notice}</Text>
-            </View>
-          ) : null}
-
-          {error && session && !selectedJob ? (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
-
           <View style={styles.screenArea}>{renderCurrentScreen()}</View>
 
           {session && !selectedJob ? (
             <View style={styles.bottomNav}>
-              <TabButton active={activeTab === TABS.HOME} tab={TABS.HOME} onPress={() => setActiveTab(TABS.HOME)} theme={theme} />
+              <TabButton
+                active={activeTab === TABS.HOME}
+                tab={TABS.HOME}
+                onPress={() => {
+                  setActiveTab(TABS.HOME);
+                  setHomeView(HOME_VIEWS.MAIN);
+                }}
+                theme={theme}
+              />
               <TabButton active={activeTab === TABS.HISTORY} tab={TABS.HISTORY} onPress={() => setActiveTab(TABS.HISTORY)} theme={theme} />
               <TabButton active={activeTab === TABS.PROFILE} tab={TABS.PROFILE} onPress={() => setActiveTab(TABS.PROFILE)} theme={theme} />
             </View>
@@ -480,56 +489,7 @@ function createStyles(theme, isLandscape) {
       backgroundColor: theme.colors.background,
       paddingHorizontal: isLandscape ? 28 : 20,
       paddingBottom: 18,
-    },
-    header: {
-      paddingTop: 8,
-      paddingBottom: 16,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    brand: {
-      color: theme.colors.text,
-      fontSize: isLandscape ? 28 : 27,
-      fontWeight: '900',
-      letterSpacing: -0.9,
-    },
-    profileButton: {
-      width: 42,
-      height: 42,
-      borderRadius: 21,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.surfaceElevated,
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-      ...theme.shadow.soft,
-    },
-    noticeBanner: {
-      backgroundColor: theme.colors.noticeBg,
-      borderRadius: 16,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      marginBottom: 14,
-      borderWidth: 1,
-      borderColor: theme.colors.noticeBorder,
-    },
-    noticeText: {
-      color: theme.colors.accentStrong,
-      fontWeight: '800',
-    },
-    errorBanner: {
-      backgroundColor: theme.colors.errorBg,
-      borderRadius: 16,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      marginBottom: 14,
-      borderWidth: 1,
-      borderColor: theme.colors.errorBorder,
-    },
-    errorText: {
-      color: theme.colors.danger,
-      fontWeight: '800',
+      paddingTop: 10,
     },
     screenArea: {
       flex: 1,
@@ -555,7 +515,7 @@ function createStyles(theme, isLandscape) {
       borderRadius: 18,
     },
     tabButtonActive: {
-      backgroundColor: theme.colors.surface,
+      backgroundColor: theme.colors.heroTint,
     },
     tabLabel: {
       color: theme.colors.softText,
@@ -563,7 +523,7 @@ function createStyles(theme, isLandscape) {
       fontSize: 12,
     },
     tabLabelActive: {
-      color: theme.colors.text,
+      color: theme.colors.accent,
     },
   });
 }

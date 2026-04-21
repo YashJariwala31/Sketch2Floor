@@ -1,257 +1,210 @@
-import React, { useEffect, useRef } from 'react';
-import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-function getStatusColor(status, theme) {
+function getStatusMeta(status, theme) {
   if (status === 'completed') {
-    return theme.colors.success;
+    return { label: 'Ready', fill: theme.colors.successSoft, text: theme.colors.success };
   }
   if (status === 'failed') {
-    return theme.colors.danger;
+    return { label: 'Issue', fill: theme.colors.errorBg, text: theme.colors.danger };
   }
   if (status === 'processing') {
-    return theme.colors.warning;
-  }
-  return theme.colors.accent;
-}
-
-function getStatusLabel(status) {
-  if (status === 'completed') {
-    return 'Ready';
-  }
-  if (status === 'failed') {
-    return 'Issue';
-  }
-  if (status === 'processing') {
-    return 'Live';
+    return { label: 'Live', fill: theme.colors.accentSoft, text: theme.colors.accent };
   }
   if (status === 'queued') {
-    return 'Queued';
+    return { label: 'Queued', fill: theme.colors.panel, text: theme.colors.muted };
   }
-  return 'Draft';
+  return { label: 'Draft', fill: theme.colors.panel, text: theme.colors.muted };
 }
 
 function formatDate(value) {
   if (!value) {
-    return 'Just now';
+    return 'Recently';
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return 'Just now';
+    return 'Recently';
   }
 
   return date.toLocaleDateString('en-IN', {
-    day: 'numeric',
     month: 'short',
+    year: 'numeric',
   });
 }
 
-export default function JobCard({ job, onPress, onDelete, theme, isLandscape }) {
-  const fade = useRef(new Animated.Value(0)).current;
-  const rise = useRef(new Animated.Value(14)).current;
-  const styles = createStyles(theme, isLandscape);
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.timing(rise, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [fade, rise]);
-
-  const statusColor = getStatusColor(job.status, theme);
-  const previewUri = job.combined_overlay_url || job.original_image_url;
-
+function Placeholder({ styles, theme }) {
   return (
-    <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
-      <Pressable style={[styles.card, isLandscape ? styles.cardLandscape : null]} onPress={onPress}>
-        <View style={[styles.previewWrap, isLandscape ? styles.previewWrapLandscape : null]}>
-          {previewUri ? (
-            <Image source={{ uri: previewUri }} style={styles.preview} resizeMode="cover" />
-          ) : (
-            <View style={styles.previewPlaceholder}>
-              <View style={styles.placeholderLineLong} />
-              <View style={styles.placeholderLineShort} />
-              <View style={styles.placeholderBox} />
-            </View>
-          )}
-
-          <View style={[styles.statusPill, { backgroundColor: `${statusColor}18` }]}>
-            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-            <Text style={[styles.statusText, { color: statusColor }]}>{getStatusLabel(job.status)}</Text>
-          </View>
-
-          {onDelete ? (
-            <Pressable
-              style={styles.deleteButton}
-              onPress={(event) => {
-                event.stopPropagation?.();
-                onDelete();
-              }}
-            >
-              <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
-            </Pressable>
-          ) : null}
-        </View>
-
-        <View style={styles.content}>
-          <View style={styles.titleRow}>
-            <Text style={styles.title} numberOfLines={1}>
-              {job.name || 'Untitled'}
-            </Text>
-            <Ionicons name="arrow-forward" size={18} color={theme.colors.softText} />
-          </View>
-
-          <View style={styles.metaRow}>
-            <Text style={styles.metaText}>{formatDate(job.created_at)}</Text>
-            <Text style={styles.metaDivider}>/</Text>
-            <Text style={styles.metaText} numberOfLines={1}>
-              {job.original_filename || 'Sketch'}
-            </Text>
-          </View>
-        </View>
-      </Pressable>
-    </Animated.View>
+    <View style={styles.previewPlaceholder}>
+      <View style={styles.previewPlaceholderInset}>
+        <View style={styles.previewTopLine} />
+        <View style={styles.previewLeftLine} />
+        <View style={styles.previewBottomLine} />
+      </View>
+      <Ionicons name="document-outline" size={20} color={theme.colors.borderStrong} />
+    </View>
   );
 }
 
-function createStyles(theme, isLandscape) {
+export default function JobCard({ job, onPress, onDelete, theme }) {
+  const styles = createStyles(theme);
+  const previewUri = job.combined_overlay_url || job.original_image_url;
+  const status = getStatusMeta(job.status, theme);
+
+  return (
+    <Pressable style={styles.card} onPress={onPress}>
+      <View style={styles.thumbWrap}>
+        {previewUri ? (
+          <Image source={{ uri: previewUri }} style={styles.thumb} resizeMode="cover" />
+        ) : (
+          <Placeholder styles={styles} theme={theme} />
+        )}
+      </View>
+
+      <View style={styles.copy}>
+        <View style={styles.topRow}>
+          <Text style={styles.title} numberOfLines={1}>
+            {job.name || 'Untitled project'}
+          </Text>
+          <View style={[styles.statusPill, { backgroundColor: status.fill }]}>
+            <Text style={[styles.statusText, { color: status.text }]}>{status.label}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.subtitle}>Digital floor plan</Text>
+        <Text style={styles.date}>{formatDate(job.created_at)}</Text>
+      </View>
+
+      {onDelete ? (
+        <Pressable
+          style={styles.deleteButton}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            onDelete();
+          }}
+        >
+          <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
+        </Pressable>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function createStyles(theme) {
   return StyleSheet.create({
     card: {
-      backgroundColor: theme.colors.card,
-      borderRadius: 30,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      padding: 13,
-      marginBottom: theme.spacing.md,
-      overflow: 'hidden',
-      ...theme.shadow.card,
-    },
-    cardLandscape: {
       flexDirection: 'row',
+      alignItems: 'center',
       gap: 14,
-      alignItems: 'stretch',
-    },
-    previewWrap: {
-      position: 'relative',
+      backgroundColor: theme.colors.surfaceElevated,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      padding: 14,
       marginBottom: 12,
+      ...theme.shadow.soft,
     },
-    previewWrapLandscape: {
-      width: '42%',
-      marginBottom: 0,
-    },
-    preview: {
-      width: '100%',
-      height: isLandscape ? 172 : 208,
-      borderRadius: 24,
-      backgroundColor: theme.colors.surfaceAlt,
-    },
-    previewPlaceholder: {
-      width: '100%',
-      height: isLandscape ? 172 : 208,
-      borderRadius: 24,
+    thumbWrap: {
+      width: 72,
+      height: 72,
+      borderRadius: 18,
+      overflow: 'hidden',
       backgroundColor: theme.colors.heroTint,
       borderWidth: 1,
+      borderColor: theme.colors.noticeBorder,
+    },
+    thumb: {
+      width: '100%',
+      height: '100%',
+    },
+    previewPlaceholder: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    previewPlaceholderInset: {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      top: 12,
+      bottom: 12,
+      borderRadius: 12,
+      borderWidth: 1,
       borderColor: theme.colors.border,
-      padding: 18,
-      justifyContent: 'space-between',
     },
-    placeholderLineLong: {
-      width: '58%',
-      height: 8,
-      borderRadius: 999,
-      backgroundColor: theme.colors.canvasLine,
-    },
-    placeholderLineShort: {
-      width: '34%',
-      height: 8,
-      borderRadius: 999,
-      backgroundColor: theme.colors.canvasLine,
-    },
-    placeholderBox: {
-      width: '38%',
-      height: '34%',
-      alignSelf: 'flex-end',
-      borderRadius: 18,
-      borderWidth: 2,
-      borderColor: theme.colors.canvasLine,
-    },
-    statusPill: {
+    previewTopLine: {
       position: 'absolute',
       left: 10,
       top: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-      paddingHorizontal: 11,
-      paddingVertical: 8,
-      borderRadius: theme.radius.pill,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
+      width: 26,
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: theme.colors.borderStrong,
     },
-    statusDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-    },
-    statusText: {
-      fontSize: 12,
-      fontWeight: '900',
-    },
-    deleteButton: {
+    previewLeftLine: {
       position: 'absolute',
-      right: 10,
+      left: 10,
       top: 10,
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
+      width: 4,
+      height: 24,
+      borderRadius: 999,
+      backgroundColor: theme.colors.borderStrong,
     },
-    content: {
+    previewBottomLine: {
+      position: 'absolute',
+      left: 10,
+      bottom: 12,
+      width: 20,
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: theme.colors.borderStrong,
+    },
+    copy: {
       flex: 1,
-      justifyContent: 'center',
-      paddingHorizontal: isLandscape ? 4 : 2,
     },
-    titleRow: {
+    topRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      marginBottom: 8,
+      gap: 10,
     },
     title: {
       flex: 1,
       color: theme.colors.text,
       fontSize: 21,
-      fontWeight: '900',
+      fontWeight: '800',
       letterSpacing: -0.5,
     },
-    metaRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
+    statusPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
     },
-    metaText: {
+    statusText: {
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    subtitle: {
+      marginTop: 4,
       color: theme.colors.muted,
       fontWeight: '700',
-      fontSize: 13,
-      flexShrink: 1,
     },
-    metaDivider: {
+    date: {
+      marginTop: 6,
       color: theme.colors.softText,
+      fontSize: 13,
       fontWeight: '700',
+    },
+    deleteButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.destructiveSoft,
+      borderWidth: 1,
+      borderColor: theme.colors.errorBorder,
     },
   });
 }

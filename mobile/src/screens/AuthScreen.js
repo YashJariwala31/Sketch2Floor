@@ -263,7 +263,7 @@ function createStyles(theme) {
       marginTop: 10,
       height: 56,
       borderRadius: 18,
-      backgroundColor: theme.colors.text,
+      backgroundColor: theme.colors.accent,
       alignItems: 'center',
       justifyContent: 'center',
     },

@@ -1,47 +1,29 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
-function ActionButton({ icon, label, detail, primary, disabled, onPress, styles, theme }) {
+function blueprint(styles) {
   return (
-    <Pressable
-      style={[styles.actionButton, primary ? styles.actionButtonPrimary : styles.actionButtonSecondary, disabled ? styles.actionButtonDisabled : null]}
-      onPress={onPress}
-      disabled={disabled}
-    >
-      <View style={[styles.actionIcon, primary ? styles.actionIconPrimary : styles.actionIconSecondary]}>
-        <Ionicons name={icon} size={20} color={primary ? '#ffffff' : theme.colors.text} />
-      </View>
-
-      <View style={styles.actionCopy}>
-        <Text style={[styles.actionLabel, primary ? styles.actionLabelPrimary : null]}>{label}</Text>
-        <Text style={[styles.actionDetail, primary ? styles.actionDetailPrimary : null]}>{detail}</Text>
-      </View>
-
-      <Ionicons name="arrow-forward" size={18} color={primary ? '#ffffff' : theme.colors.text} />
-    </Pressable>
-  );
-}
-
-function SketchPlaceholder({ styles, theme }) {
-  return (
-    <View style={styles.placeholderSurface}>
-      <View style={styles.sheet} />
-
-      <View style={styles.plan}>
-        <View style={styles.planTop} />
-        <View style={styles.planLeft} />
-        <View style={styles.planRight} />
-        <View style={styles.planBottom} />
-        <View style={styles.planMiddle} />
-        <View style={styles.planInset} />
-        <View style={[styles.planDoor, { borderColor: theme.colors.text }]} />
-      </View>
+    <View style={styles.blueprintWrap}>
+      <View style={styles.blueprintLineTop} />
+      <View style={styles.blueprintLineLeft} />
+      <View style={styles.blueprintLineBottom} />
+      <View style={styles.blueprintLineInner} />
+      <View style={styles.blueprintLineRight} />
+      <View style={styles.blueprintLineShort} />
+      <View style={styles.blueprintDoorArc} />
     </View>
   );
 }
 
-export default function HomeScreen({ busy, onUploadImage, onPickFromGallery, theme, isLandscape }) {
+function Pill({ label, styles }) {
+  return (
+    <View style={styles.tipPill}>
+      <Text style={styles.tipPillText}>{label}</Text>
+    </View>
+  );
+}
+
+export default function HomeScreen({ busy, onOpenUploadScreen, onCaptureImage, theme, isLandscape }) {
   const fade = useRef(new Animated.Value(0)).current;
   const rise = useRef(new Animated.Value(18)).current;
   const styles = createStyles(theme, isLandscape);
@@ -50,56 +32,45 @@ export default function HomeScreen({ busy, onUploadImage, onPickFromGallery, the
     Animated.parallel([
       Animated.timing(fade, {
         toValue: 1,
-        duration: 320,
+        duration: 300,
         useNativeDriver: true,
       }),
       Animated.spring(rise, {
         toValue: 0,
         useNativeDriver: true,
         damping: 15,
-        stiffness: 140,
+        stiffness: 145,
       }),
     ]).start();
   }, [fade, rise]);
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Animated.View style={[styles.screen, { opacity: fade, transform: [{ translateY: rise }] }]}>
-        <View style={styles.hero}>
-          <Text style={styles.title}>New floorplan</Text>
-          <Text style={styles.subtitle}>Choose a sketch source.</Text>
+      <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
+        <Text style={styles.title}>Sketch2FloorPlan</Text>
+        <Text style={styles.subtitle}>AI floor plan digitizer</Text>
+
+        <View style={styles.heroCard}>
+          <View style={styles.heroVisual}>{blueprint(styles)}</View>
+          <Text style={styles.heroKicker}>New project</Text>
+          <Text style={styles.heroTitle}>Upload or capture a hand-drawn sketch</Text>
         </View>
 
-        <View style={[styles.stage, isLandscape ? styles.stageLandscape : null]}>
-          <View style={styles.previewBlock}>
-            <SketchPlaceholder styles={styles} theme={theme} />
-            <View style={styles.previewMeta}>
-              <Text style={styles.previewTitle}>Ready for upload</Text>
-              <Text style={styles.previewText}>No sketch selected</Text>
-            </View>
-          </View>
+        <Pressable style={[styles.primaryButton, busy ? styles.buttonDisabled : null]} onPress={onOpenUploadScreen} disabled={busy}>
+          <Text style={styles.primaryButtonText}>Upload Sketch</Text>
+        </Pressable>
 
-          <View style={styles.actions}>
-            <ActionButton
-              icon="camera"
-              label={busy ? 'Opening' : 'Camera'}
-              detail="Capture"
-              primary
-              disabled={busy}
-              onPress={onUploadImage}
-              styles={styles}
-              theme={theme}
-            />
+        <Pressable style={[styles.secondaryButton, busy ? styles.buttonDisabled : null]} onPress={onCaptureImage} disabled={busy}>
+          <Text style={styles.secondaryButtonText}>{busy ? 'Opening Camera' : 'Capture Image'}</Text>
+        </Pressable>
 
-            <ActionButton
-              icon="image-outline"
-              label={busy ? 'Opening' : 'Import'}
-              detail="From phone"
-              disabled={busy}
-              onPress={onPickFromGallery}
-              styles={styles}
-              theme={theme}
-            />
+        <View style={styles.tipCard}>
+          <Text style={styles.tipLabel}>Quick tip</Text>
+          <Text style={styles.tipTitle}>Use a flat photo with clear walls</Text>
+          <View style={styles.tipRow}>
+            <Pill label="White paper" styles={styles} />
+            <Pill label="Good light" styles={styles} />
+            <Pill label="Straight angle" styles={styles} />
           </View>
         </View>
       </Animated.View>
@@ -110,217 +81,198 @@ export default function HomeScreen({ busy, onUploadImage, onPickFromGallery, the
 function createStyles(theme, isLandscape) {
   return StyleSheet.create({
     content: {
-      flexGrow: 1,
-      paddingBottom: 28,
-    },
-    screen: {
-      gap: 18,
-      paddingBottom: 4,
-    },
-    hero: {
-      alignItems: 'center',
-      paddingTop: isLandscape ? 4 : 10,
+      paddingBottom: 32,
     },
     title: {
       color: theme.colors.text,
-      fontSize: isLandscape ? 34 : 32,
+      fontSize: isLandscape ? 32 : 30,
       fontWeight: '900',
-      letterSpacing: -1,
-      textAlign: 'center',
+      letterSpacing: -0.9,
     },
     subtitle: {
-      marginTop: 8,
+      marginTop: 6,
+      marginBottom: 18,
       color: theme.colors.muted,
-      fontSize: 15,
-      fontWeight: '700',
-      textAlign: 'center',
+      fontWeight: '600',
     },
-    stage: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 30,
+    heroCard: {
+      backgroundColor: theme.colors.surfaceElevated,
+      borderRadius: theme.radius.xl,
       borderWidth: 1,
-      borderColor: theme.colors.border,
-      padding: isLandscape ? 18 : 16,
-      gap: 16,
+      borderColor: theme.colors.borderStrong,
+      padding: 16,
+      marginBottom: 14,
       ...theme.shadow.card,
     },
-    stageLandscape: {
-      flexDirection: 'row',
-      alignItems: 'stretch',
-    },
-    previewBlock: {
-      flex: 1,
-      gap: 12,
-    },
-    placeholderSurface: {
-      minHeight: isLandscape ? 320 : 360,
-      borderRadius: 26,
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+    heroVisual: {
+      height: isLandscape ? 210 : 160,
+      borderRadius: 24,
       backgroundColor: theme.colors.heroTint,
-      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: theme.colors.noticeBorder,
       alignItems: 'center',
       justifyContent: 'center',
-      padding: 22,
-    },
-    sheet: {
-      position: 'absolute',
-      width: '82%',
-      height: '78%',
-      borderRadius: 24,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      transform: [{ rotate: '-5deg' }],
-      opacity: 0.7,
-    },
-    plan: {
-      width: '88%',
-      height: '82%',
-      borderRadius: 24,
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-      backgroundColor: theme.colors.surface,
-      position: 'relative',
+      marginBottom: 14,
       overflow: 'hidden',
     },
-    planTop: {
+    blueprintWrap: {
+      width: '84%',
+      height: '74%',
+      position: 'relative',
+      opacity: 0.95,
+    },
+    blueprintLineTop: {
       position: 'absolute',
-      left: '16%',
-      top: '18%',
+      left: '9%',
+      top: '12%',
       width: '54%',
-      height: 7,
-      borderRadius: 6,
+      height: 6,
+      borderRadius: 999,
       backgroundColor: theme.colors.canvasLine,
     },
-    planLeft: {
+    blueprintLineLeft: {
       position: 'absolute',
-      left: '16%',
-      top: '18%',
-      width: 7,
-      height: '48%',
-      borderRadius: 6,
+      left: '9%',
+      top: '12%',
+      width: 6,
+      height: '54%',
+      borderRadius: 999,
       backgroundColor: theme.colors.canvasLine,
     },
-    planRight: {
+    blueprintLineBottom: {
       position: 'absolute',
-      right: '18%',
-      top: '18%',
-      width: 7,
-      height: '26%',
-      borderRadius: 6,
+      left: '9%',
+      bottom: '16%',
+      width: '48%',
+      height: 6,
+      borderRadius: 999,
       backgroundColor: theme.colors.canvasLine,
     },
-    planBottom: {
+    blueprintLineInner: {
       position: 'absolute',
-      left: '16%',
-      bottom: '18%',
-      width: '46%',
-      height: 7,
-      borderRadius: 6,
-      backgroundColor: theme.colors.canvasLine,
-    },
-    planMiddle: {
-      position: 'absolute',
-      left: '43%',
-      top: '36%',
-      width: 7,
+      left: '39%',
+      top: '12%',
+      width: 6,
       height: '28%',
-      borderRadius: 6,
+      borderRadius: 999,
       backgroundColor: theme.colors.canvasLine,
     },
-    planInset: {
+    blueprintLineRight: {
       position: 'absolute',
-      right: '32%',
-      bottom: '18%',
-      width: '18%',
-      height: 7,
-      borderRadius: 6,
+      right: '19%',
+      top: '12%',
+      width: 6,
+      height: '28%',
+      borderRadius: 999,
       backgroundColor: theme.colors.canvasLine,
     },
-    planDoor: {
+    blueprintLineShort: {
       position: 'absolute',
-      left: '28%',
-      bottom: '18.2%',
-      width: 44,
-      height: 44,
-      borderTopWidth: 5,
-      borderRightWidth: 5,
-      borderTopRightRadius: 44,
+      right: '19%',
+      top: '40%',
+      width: '17%',
+      height: 6,
+      borderRadius: 999,
+      backgroundColor: theme.colors.canvasLine,
+    },
+    blueprintDoorArc: {
+      position: 'absolute',
+      left: '41%',
+      bottom: '16%',
+      width: 34,
+      height: 34,
+      borderTopWidth: 4,
+      borderRightWidth: 4,
+      borderTopRightRadius: 34,
+      borderColor: theme.colors.canvasLine,
       transform: [{ rotate: '90deg' }],
     },
-    previewMeta: {
-      alignItems: 'center',
-      gap: 4,
-      paddingBottom: 4,
+    heroKicker: {
+      color: theme.colors.muted,
+      fontSize: 13,
+      fontWeight: '800',
+      textAlign: 'right',
     },
-    previewTitle: {
+    heroTitle: {
+      marginTop: 8,
+      color: theme.colors.text,
+      fontSize: isLandscape ? 32 : 28,
+      lineHeight: isLandscape ? 38 : 34,
+      fontWeight: '900',
+      letterSpacing: -0.8,
+      maxWidth: isLandscape ? '82%' : '100%',
+    },
+    primaryButton: {
+      height: 58,
+      borderRadius: 18,
+      backgroundColor: theme.colors.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+      ...theme.shadow.soft,
+    },
+    primaryButtonText: {
+      color: '#ffffff',
+      fontSize: 17,
+      fontWeight: '800',
+    },
+    secondaryButton: {
+      height: 58,
+      borderRadius: 18,
+      backgroundColor: theme.colors.heroTint,
+      borderWidth: 1,
+      borderColor: theme.colors.noticeBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 18,
+    },
+    secondaryButtonText: {
       color: theme.colors.text,
       fontSize: 17,
-      fontWeight: '900',
-      letterSpacing: -0.4,
+      fontWeight: '800',
     },
-    previewText: {
-      color: theme.colors.softText,
-      fontWeight: '700',
+    buttonDisabled: {
+      opacity: 0.72,
     },
-    actions: {
-      gap: 12,
-      width: isLandscape ? 300 : '100%',
-      justifyContent: 'center',
+    tipCard: {
+      backgroundColor: theme.colors.heroTint,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.colors.noticeBorder,
+      padding: 16,
     },
-    actionButton: {
-      minHeight: 84,
-      borderRadius: 24,
-      paddingHorizontal: 18,
-      paddingVertical: 16,
+    tipLabel: {
+      color: theme.colors.muted,
+      fontSize: 12,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    tipTitle: {
+      marginTop: 10,
+      color: theme.colors.text,
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: '800',
+    },
+    tipRow: {
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 14,
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 14,
     },
-    actionButtonPrimary: {
-      backgroundColor: theme.colors.text,
-    },
-    actionButtonSecondary: {
+    tipPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
       backgroundColor: theme.colors.surfaceElevated,
       borderWidth: 1,
       borderColor: theme.colors.borderStrong,
     },
-    actionButtonDisabled: {
-      opacity: 0.74,
-    },
-    actionIcon: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    actionIconPrimary: {
-      backgroundColor: 'rgba(255,255,255,0.14)',
-    },
-    actionIconSecondary: {
-      backgroundColor: theme.colors.surface,
-    },
-    actionCopy: {
-      flex: 1,
-    },
-    actionLabel: {
-      color: theme.colors.text,
-      fontSize: 19,
-      fontWeight: '900',
-      letterSpacing: -0.3,
-    },
-    actionLabelPrimary: {
-      color: '#ffffff',
-    },
-    actionDetail: {
-      marginTop: 4,
-      color: theme.colors.softText,
+    tipPillText: {
+      color: theme.colors.muted,
+      fontSize: 13,
       fontWeight: '700',
-    },
-    actionDetailPrimary: {
-      color: 'rgba(255,255,255,0.74)',
     },
   });
 }

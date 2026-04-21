@@ -93,7 +93,7 @@ function createStyles(theme, isLandscape) {
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: '#23b8ff',
+      backgroundColor: theme.colors.accent,
     },
     brand: {
       color: theme.colors.text,
@@ -119,7 +119,7 @@ function createStyles(theme, isLandscape) {
       paddingHorizontal: 16,
       paddingVertical: 11,
       borderRadius: 14,
-      backgroundColor: theme.colors.text,
+      backgroundColor: theme.colors.accent,
     },
     primaryButtonText: {
       color: '#ffffff',

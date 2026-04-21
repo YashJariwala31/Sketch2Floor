@@ -17,77 +17,76 @@ const shared = {
 };
 
 const lightColors = {
-  background: '#ffffff',
-  backgroundAccent: '#fafafa',
-  surface: '#ffffff',
-  surfaceAlt: '#f6f6f7',
-  surfaceElevated: '#fcfcfc',
-  panel: '#f4f4f5',
-  heroTint: '#fafafa',
-  heroTintStrong: '#f2f2f3',
-  card: '#ffffff',
-  text: '#111111',
-  muted: '#6b7280',
-  softText: '#9ca3af',
-  accent: '#111111',
-  accentStrong: '#111111',
-  accentSoft: '#f1f1f1',
-  border: '#ebebed',
-  borderStrong: '#dddddf',
-  shadow: '#0f172a',
-  success: '#18a57a',
-  successSoft: '#e7f8f1',
-  warning: '#d88e33',
-  warningSoft: '#fff4e6',
-  danger: '#df6761',
-  noticeBg: '#f7f7f8',
-  noticeBorder: '#e5e7eb',
-  errorBg: '#fff1f1',
-  errorBorder: '#f3d1d1',
-  destructiveSoft: '#fff1f1',
-  glow: 'rgba(17, 17, 17, 0.03)',
-  glowStrong: 'rgba(17, 17, 17, 0.06)',
-  canvasLine: 'rgba(17, 17, 17, 0.18)',
-  canvasGrid: 'rgba(17, 17, 17, 0.08)',
-  overlay: 'rgba(17, 17, 17, 0.02)',
+  background: '#F3F7FC',
+  backgroundAccent: '#EAF1F9',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F7FAFE',
+  surfaceElevated: '#FCFDFF',
+  panel: '#EEF4FB',
+  heroTint: '#EDF4FF',
+  heroTintStrong: '#E4EEFB',
+  card: '#FFFFFF',
+  text: '#172538',
+  muted: '#617388',
+  softText: '#8FA0B4',
+  accent: '#2D66F6',
+  accentStrong: '#1F54D0',
+  accentSoft: '#E3ECFF',
+  border: '#D8E2EE',
+  borderStrong: '#C3D0E0',
+  shadow: '#122033',
+  success: '#249E6C',
+  successSoft: '#E6F6EE',
+  warning: '#4A7FFF',
+  warningSoft: '#E8F0FF',
+  danger: '#D96A5C',
+  noticeBg: '#EAF2FF',
+  noticeBorder: '#D3E1FF',
+  errorBg: '#FFF1EE',
+  errorBorder: '#F3D3CF',
+  destructiveSoft: '#FFF2EF',
+  glow: 'rgba(45, 102, 246, 0.08)',
+  glowStrong: 'rgba(45, 102, 246, 0.16)',
+  canvasLine: 'rgba(33, 51, 74, 0.62)',
+  canvasGrid: 'rgba(33, 51, 74, 0.12)',
+  overlay: 'rgba(21, 36, 58, 0.04)',
 };
 
-function createShadow(colors, isDark) {
+function createShadow(colors) {
   return {
     card: {
       shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 14 },
-      shadowOpacity: isDark ? 0.24 : 0.07,
-      shadowRadius: 26,
-      elevation: isDark ? 5 : 4,
+      shadowOpacity: 0.075,
+      shadowRadius: 30,
+      elevation: 5,
     },
     soft: {
       shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.18 : 0.04,
-      shadowRadius: 14,
-      elevation: isDark ? 2 : 1,
+      shadowOpacity: 0.05,
+      shadowRadius: 18,
+      elevation: 2,
     },
     float: {
       shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 20 },
-      shadowOpacity: isDark ? 0.28 : 0.09,
-      shadowRadius: 30,
-      elevation: isDark ? 8 : 5,
+      shadowOpacity: 0.11,
+      shadowRadius: 36,
+      elevation: 7,
     },
   };
 }
 
-export function getTheme(scheme) {
-  const isDark = false;
+export function getTheme() {
   const colors = lightColors;
   return {
     colors,
     spacing: shared.spacing,
     radius: shared.radius,
-    shadow: createShadow(colors, isDark),
-    isDark,
+    shadow: createShadow(colors),
+    isDark: false,
   };
 }
 
-export const theme = getTheme('light');
+export const theme = getTheme();
