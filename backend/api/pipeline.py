@@ -167,6 +167,7 @@ def process_floorplan_job(job_id: int):
             shutil.copyfile(room_src, REPO_ROOT / 'intermediate' / 'room_polygons.json')
 
         command_log.append(_run_command([python, '-m', 'opening_pipeline.test_final', '--image', str(image_path)]))
+        geometry_output = REPO_ROOT / 'predictions' / f'{source_stem}_geometry.json'
         command_log.append(
             _run_command(
                 [
@@ -180,12 +181,18 @@ def process_floorplan_job(job_id: int):
                     '--window_mask',
                     str(REPO_ROOT / 'predictions' / f'{source_stem}_window.png'),
                     '--out_json',
-                    str(REPO_ROOT / 'predictions' / f'{source_stem}_geometry.json'),
+                    str(geometry_output),
                     '--out_annotated',
                     str(REPO_ROOT / 'predictions' / f'{source_stem}_annotated.png'),
                 ]
             )
         )
+
+        if not geometry_output.exists() or geometry_output.stat().st_size == 0:
+            raise RuntimeError(
+                f'Geometry output was not generated for {source_stem}. '
+                'The mask-to-geometry step completed without writing the expected JSON file.'
+            )
 
         env = os.environ.copy()
         env['IMAGE_ID'] = source_stem

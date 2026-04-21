@@ -1,26 +1,57 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
-export default function ProfileScreen({ connection, onRefreshConnection, theme, isLandscape }) {
+function DetailRow({ label, value, styles }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue} numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+export default function ProfileScreen({ connection, session, onRefreshConnection, onSignOut, theme, isLandscape }) {
   const connectionOk = connection?.ok;
   const styles = createStyles(theme, isLandscape);
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Connection Status</Text>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, { backgroundColor: connectionOk ? theme.colors.success : theme.colors.danger }]} />
-          <Text style={styles.statusText}>{connectionOk ? 'Backend connected' : 'Backend unavailable'}</Text>
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.title}>Profile</Text>
+          <Text style={styles.subtitle}>App settings</Text>
         </View>
-        <Text style={styles.detailLabel}>API URL</Text>
-        <Text style={styles.detailValue}>{connection?.apiBaseUrl || 'Unavailable'}</Text>
-        <Text style={styles.detailLabel}>Message</Text>
-        <Text style={styles.detailValue}>
-          {connectionOk ? 'Your phone should be able to upload images now.' : connection?.error || 'No connection check yet.'}
-        </Text>
+
+        <View style={[styles.statePill, connectionOk ? styles.statePillOk : styles.statePillError]}>
+          <View style={[styles.stateDot, { backgroundColor: connectionOk ? theme.colors.success : theme.colors.danger }]} />
+          <Text style={[styles.stateText, { color: connectionOk ? theme.colors.success : theme.colors.danger }]}>
+            {connectionOk ? 'Connected' : 'Offline'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.panel}>
+        <View style={styles.iconWrap}>
+          <Ionicons name="sparkles-outline" size={18} color={theme.colors.accentStrong} />
+        </View>
+
+        <DetailRow label="Name" value={session?.name || 'Guest'} styles={styles} />
+        <DetailRow label="Email" value={session?.email || 'Unavailable'} styles={styles} />
+        <DetailRow label="Backend" value={connection?.apiBaseUrl || 'Unavailable'} styles={styles} />
+        <DetailRow label="Theme" value="Light studio" styles={styles} />
+        <DetailRow label="Downloads" value="Phone storage" styles={styles} />
+
         <Pressable style={styles.primaryButton} onPress={onRefreshConnection}>
-          <Text style={styles.primaryButtonText}>Check Connection Again</Text>
+          <Ionicons name="refresh" size={16} color="#ffffff" />
+          <Text style={styles.primaryButtonText}>Refresh</Text>
+        </Pressable>
+
+        <Pressable style={styles.secondaryButton} onPress={onSignOut}>
+          <Ionicons name="log-out-outline" size={16} color={theme.colors.text} />
+          <Text style={styles.secondaryButtonText}>Sign Out</Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -31,58 +62,117 @@ function createStyles(theme, isLandscape) {
   return StyleSheet.create({
     content: {
       paddingBottom: 34,
-      paddingHorizontal: isLandscape ? 8 : 0,
     },
-    sectionCard: {
+    headerRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 12,
+      marginBottom: 18,
+    },
+    title: {
+      color: theme.colors.text,
+      fontSize: isLandscape ? 34 : 31,
+      fontWeight: '900',
+      letterSpacing: -1,
+    },
+    subtitle: {
+      marginTop: 6,
+      color: theme.colors.muted,
+      fontWeight: '700',
+    },
+    statePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+    },
+    statePillOk: {
+      backgroundColor: theme.colors.successSoft,
+      borderColor: theme.colors.border,
+    },
+    statePillError: {
+      backgroundColor: theme.colors.errorBg,
+      borderColor: theme.colors.errorBorder,
+    },
+    stateDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    stateText: {
+      fontWeight: '900',
+      fontSize: 12,
+    },
+    panel: {
       backgroundColor: theme.colors.surface,
-      borderRadius: theme.radius.md,
+      borderRadius: theme.radius.xl,
       borderWidth: 1,
       borderColor: theme.colors.border,
       padding: theme.spacing.lg,
-      marginBottom: theme.spacing.md,
-      ...theme.shadow.soft,
+      ...theme.shadow.card,
     },
-    sectionTitle: {
-      color: theme.colors.text,
-      fontSize: 19,
-      fontWeight: '900',
-      marginBottom: 14,
-    },
-    statusRow: {
-      flexDirection: 'row',
+    iconWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: 'center',
-      marginBottom: 14,
+      justifyContent: 'center',
+      backgroundColor: theme.colors.panel,
+      marginBottom: 18,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
     },
-    statusDot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      marginRight: 10,
-    },
-    statusText: {
-      color: theme.colors.text,
-      fontWeight: '800',
+    detailRow: {
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+      gap: 6,
     },
     detailLabel: {
       color: theme.colors.softText,
-      fontWeight: '700',
-      marginTop: 10,
+      fontWeight: '800',
+      fontSize: 12,
+      textTransform: 'uppercase',
+      letterSpacing: 1,
     },
     detailValue: {
       color: theme.colors.text,
-      marginTop: 4,
+      fontWeight: '700',
       lineHeight: 21,
     },
     primaryButton: {
-      marginTop: 18,
+      marginTop: 20,
       backgroundColor: theme.colors.accent,
       borderRadius: theme.radius.pill,
       paddingVertical: 14,
+      flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
     },
     primaryButtonText: {
       color: '#ffffff',
-      fontWeight: '800',
+      fontWeight: '900',
+    },
+    secondaryButton: {
+      marginTop: 10,
+      borderRadius: theme.radius.pill,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: theme.colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+    },
+    secondaryButtonText: {
+      color: theme.colors.text,
+      fontWeight: '900',
     },
   });
 }

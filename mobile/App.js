@@ -8,14 +8,15 @@ import {
   StyleSheet,
   Text,
   View,
-  useColorScheme,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import AuthScreen from './src/screens/AuthScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import LandingScreen from './src/screens/LandingScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ResultsScreen from './src/screens/ResultsScreen';
@@ -29,9 +30,15 @@ const TABS = {
   PROFILE: 'profile',
 };
 
+const AUTH_ROUTES = {
+  LANDING: 'landing',
+  LOGIN: 'login',
+  SIGNUP: 'signup',
+};
+
 const TAB_META = {
-  [TABS.HOME]: { label: 'Home', icon: 'sparkles-outline', activeIcon: 'sparkles' },
-  [TABS.HISTORY]: { label: 'History', icon: 'albums-outline', activeIcon: 'albums' },
+  [TABS.HOME]: { label: 'Studio', icon: 'scan-outline', activeIcon: 'scan' },
+  [TABS.HISTORY]: { label: 'Library', icon: 'layers-outline', activeIcon: 'layers' },
   [TABS.PROFILE]: { label: 'Profile', icon: 'person-outline', activeIcon: 'person' },
 };
 
@@ -41,20 +48,14 @@ function TabButton({ active, tab, onPress, theme }) {
 
   return (
     <Pressable style={[styles.tabButton, active ? styles.tabButtonActive : null]} onPress={onPress}>
-      <Ionicons
-        name={active ? meta.activeIcon : meta.icon}
-        size={18}
-        color={active ? theme.colors.accent : theme.colors.softText}
-      />
+      <Ionicons name={active ? meta.activeIcon : meta.icon} size={19} color={active ? theme.colors.text : theme.colors.softText} />
       <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>{meta.label}</Text>
     </Pressable>
   );
 }
 
 export default function App() {
-  const systemScheme = useColorScheme();
-  const scheme = systemScheme === 'dark' ? 'dark' : 'light';
-  const theme = useMemo(() => getTheme(scheme), [scheme]);
+  const theme = useMemo(() => getTheme('light'), []);
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const styles = useMemo(() => createStyles(theme, isLandscape), [theme, isLandscape]);
@@ -67,14 +68,8 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [activeTab, setActiveTab] = useState(TABS.HOME);
   const [connection, setConnection] = useState(null);
-
-  const headerMeta = selectedJob
-    ? 'Project result'
-    : activeTab === TABS.HISTORY
-      ? 'Your converted floorplans'
-      : activeTab === TABS.PROFILE
-        ? 'Connection and device settings'
-        : 'Capture a sketch and keep the final result in the app';
+  const [session, setSession] = useState(null);
+  const [authRoute, setAuthRoute] = useState(AUTH_ROUTES.LANDING);
 
   async function refreshConnection(showSuccess = false) {
     const result = await testBackendConnection();
@@ -82,7 +77,7 @@ export default function App() {
     if (!result.ok) {
       setError(result.error || 'Unable to reach backend');
     } else if (showSuccess) {
-      setNotice('Backend connection looks good.');
+      setNotice('Connected');
     }
     return result;
   }
@@ -111,11 +106,19 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadJobs();
-  }, []);
+    if (session) {
+      loadJobs();
+      return;
+    }
+    setJobs([]);
+    setSelectedJob(null);
+    setLoading(false);
+    setError('');
+    setNotice('');
+  }, [session]);
 
   useEffect(() => {
-    if (!selectedJob || (selectedJob.status !== 'queued' && selectedJob.status !== 'processing')) {
+    if (!session || !selectedJob || (selectedJob.status !== 'queued' && selectedJob.status !== 'processing')) {
       return undefined;
     }
 
@@ -132,6 +135,13 @@ export default function App() {
     }
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!session) {
+        if (authRoute !== AUTH_ROUTES.LANDING) {
+          setAuthRoute(AUTH_ROUTES.LANDING);
+          return true;
+        }
+        return false;
+      }
       if (selectedJob) {
         setSelectedJob(null);
         return true;
@@ -144,7 +154,7 @@ export default function App() {
     });
 
     return () => subscription.remove();
-  }, [activeTab, selectedJob]);
+  }, [activeTab, selectedJob, session, authRoute]);
 
   async function uploadCapturedSketch({
     imageUri,
@@ -172,7 +182,7 @@ export default function App() {
 
       setSelectedJob(created);
       setActiveTab(TABS.HISTORY);
-      setNotice(`${successNotice} Processing has started automatically.`);
+      setNotice(successNotice);
       Alert.alert(successTitle, successMessage);
       await loadJobs();
     } catch (err) {
@@ -191,7 +201,7 @@ export default function App() {
       setNotice('Opening camera...');
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow camera access to capture sketches.');
+        Alert.alert('Permission needed', 'Please allow camera access.');
         setNotice('');
         return;
       }
@@ -213,11 +223,11 @@ export default function App() {
         imageName: asset.fileName || `floorplan-${Date.now()}.jpg`,
         mimeType: asset.mimeType || 'image/jpeg',
         name: 'New floorplan scan',
-        description: 'Captured from the device camera.',
-        uploadingNotice: 'Uploading your sketch...',
-        successNotice: 'Sketch uploaded successfully.',
+        description: 'Captured from camera',
+        uploadingNotice: 'Uploading...',
+        successNotice: 'Uploaded',
         successTitle: 'Upload complete',
-        successMessage: 'Your sketch was captured and added to your conversions.',
+        successMessage: 'Your sketch was added.',
         failureMessage: 'Unable to upload image',
       });
     } catch (err) {
@@ -233,10 +243,10 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Opening your photos...');
+      setNotice('Opening photos...');
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow photo access to choose an existing sketch.');
+        Alert.alert('Permission needed', 'Please allow photo access.');
         setNotice('');
         return;
       }
@@ -256,12 +266,12 @@ export default function App() {
         imageUri: asset.uri,
         imageName: asset.fileName || 'floorplan.jpg',
         mimeType: asset.mimeType || 'image/jpeg',
-        name: 'Imported floorplan project',
-        description: 'Selected from the device gallery.',
-        uploadingNotice: 'Uploading your selected sketch...',
-        successNotice: 'Sketch imported successfully.',
+        name: 'Imported floorplan',
+        description: 'Imported from phone',
+        uploadingNotice: 'Uploading...',
+        successNotice: 'Imported',
         successTitle: 'Upload complete',
-        successMessage: 'Your sketch was imported and added to your conversions.',
+        successMessage: 'Your sketch was added.',
         failureMessage: 'Unable to import image',
       });
     } catch (err) {
@@ -280,15 +290,14 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Starting floorplan processing...');
+      setNotice('Starting...');
       const started = await startJob(job.id);
       setSelectedJob(started);
-      Alert.alert('Processing started', 'Your project is now being processed.');
       await loadJobs();
     } catch (err) {
       setError(err.message || 'Unable to start job');
       setNotice('');
-      Alert.alert('Could not start processing', err.message || 'Unable to start job.');
+      Alert.alert('Could not start', err.message || 'Unable to start job.');
     } finally {
       setBusy(false);
     }
@@ -302,12 +311,12 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Deleting project...');
+      setNotice('Deleting...');
       await deleteJob(job.id);
       if (selectedJob?.id === job.id) {
         setSelectedJob(null);
       }
-      setNotice('Project deleted.');
+      setNotice('Deleted');
       await loadJobs();
     } catch (err) {
       setError(err.message || 'Unable to delete job');
@@ -322,20 +331,54 @@ export default function App() {
     try {
       setBusy(true);
       setError('');
-      setNotice('Saving floorplan to your phone...');
-      await saveImageToDevice(url, 'Sketch2FloorPlan');
-      setNotice('Floorplan saved to your photo library.');
-      Alert.alert('Saved', 'Your floorplan image was saved to the phone gallery.');
+      setNotice('Preparing download...');
+      const result = await saveImageToDevice(url, 'Sketch2FloorPlan');
+      setNotice(result.message || 'Downloaded');
     } catch (err) {
-      setError(err.message || 'Unable to save image');
+      setError(err.message || 'Unable to prepare download');
       setNotice('');
-      Alert.alert('Save failed', err.message || 'Unable to save image.');
+      Alert.alert('Download failed', err.message || 'Unable to prepare download.');
     } finally {
       setBusy(false);
     }
   }
 
+  function handleAuthSubmit(authValues) {
+    setSession({
+      email: authValues.email,
+      name: authValues.fullName || authValues.email.split('@')[0],
+    });
+    setActiveTab(TABS.HOME);
+    setSelectedJob(null);
+    setNotice('Welcome back');
+    setError('');
+    setAuthRoute(AUTH_ROUTES.LANDING);
+  }
+
+  function handleSignOut() {
+    setSession(null);
+    setConnection(null);
+    setActiveTab(TABS.HOME);
+  }
+
   function renderCurrentScreen() {
+    if (!session) {
+      if (authRoute === AUTH_ROUTES.LANDING) {
+        return <LandingScreen theme={theme} isLandscape={isLandscape} onLogin={() => setAuthRoute(AUTH_ROUTES.LOGIN)} onSignUp={() => setAuthRoute(AUTH_ROUTES.SIGNUP)} />;
+      }
+
+      return (
+        <AuthScreen
+          busy={busy}
+          theme={theme}
+          mode={authRoute === AUTH_ROUTES.SIGNUP ? 'signup' : 'login'}
+          onBack={() => setAuthRoute(AUTH_ROUTES.LANDING)}
+          onSwitchMode={() => setAuthRoute(authRoute === AUTH_ROUTES.SIGNUP ? AUTH_ROUTES.LOGIN : AUTH_ROUTES.SIGNUP)}
+          onSubmit={handleAuthSubmit}
+        />
+      );
+    }
+
     if (selectedJob) {
       return (
         <ResultsScreen
@@ -368,7 +411,16 @@ export default function App() {
     }
 
     if (activeTab === TABS.PROFILE) {
-      return <ProfileScreen connection={connection} onRefreshConnection={() => refreshConnection(true)} theme={theme} isLandscape={isLandscape} />;
+      return (
+        <ProfileScreen
+          connection={connection}
+          session={session}
+          onRefreshConnection={() => refreshConnection(true)}
+          onSignOut={handleSignOut}
+          theme={theme}
+          isLandscape={isLandscape}
+        />
+      );
     }
 
     return <HomeScreen busy={busy} onUploadImage={handleUploadImage} onPickFromGallery={handlePickFromGallery} theme={theme} isLandscape={isLandscape} />;
@@ -379,26 +431,24 @@ export default function App() {
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.colors.background} />
         <ExpoStatusBar style={theme.isDark ? 'light' : 'dark'} />
-        <View style={styles.container}>
-          <View style={styles.header}>
-            <View style={styles.headerCopy}>
-              <Text style={styles.brand}>Sketch2FloorPlan</Text>
-              <Text style={styles.headerMeta}>{headerMeta}</Text>
-            </View>
-            {!selectedJob ? (
-              <Pressable style={styles.profileButton} onPress={() => setActiveTab(TABS.PROFILE)}>
-                <Ionicons name="person-outline" size={20} color={theme.colors.text} />
-              </Pressable>
-            ) : null}
-          </View>
 
-          {notice && !selectedJob ? (
+        <View style={styles.container}>
+          {session && !selectedJob ? (
+            <View style={styles.header}>
+              <Text style={styles.brand}>Sketch2FloorPlan</Text>
+              <Pressable style={styles.profileButton} onPress={() => setActiveTab(TABS.PROFILE)}>
+                <Ionicons name="person-outline" size={19} color={theme.colors.text} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {notice && session && !selectedJob ? (
             <View style={styles.noticeBanner}>
               <Text style={styles.noticeText}>{notice}</Text>
             </View>
           ) : null}
 
-          {error && !selectedJob ? (
+          {error && session && !selectedJob ? (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
@@ -406,7 +456,7 @@ export default function App() {
 
           <View style={styles.screenArea}>{renderCurrentScreen()}</View>
 
-          {!selectedJob ? (
+          {session && !selectedJob ? (
             <View style={styles.bottomNav}>
               <TabButton active={activeTab === TABS.HOME} tab={TABS.HOME} onPress={() => setActiveTab(TABS.HOME)} theme={theme} />
               <TabButton active={activeTab === TABS.HISTORY} tab={TABS.HISTORY} onPress={() => setActiveTab(TABS.HISTORY)} theme={theme} />
@@ -428,48 +478,38 @@ function createStyles(theme, isLandscape) {
     container: {
       flex: 1,
       backgroundColor: theme.colors.background,
-      paddingHorizontal: isLandscape ? 28 : 18,
+      paddingHorizontal: isLandscape ? 28 : 20,
       paddingBottom: 18,
     },
     header: {
-      paddingTop: 10,
-      paddingBottom: 18,
+      paddingTop: 8,
+      paddingBottom: 16,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
     },
-    headerCopy: {
-      flex: 1,
-      paddingRight: 12,
-    },
     brand: {
       color: theme.colors.text,
-      fontSize: isLandscape ? 30 : 29,
+      fontSize: isLandscape ? 28 : 27,
       fontWeight: '900',
       letterSpacing: -0.9,
     },
-    headerMeta: {
-      marginTop: 5,
-      color: theme.colors.softText,
-      fontWeight: '700',
-      lineHeight: 20,
-    },
     profileButton: {
-      width: 44,
-      height: 44,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 22,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: theme.colors.surfaceElevated,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.colors.borderStrong,
       ...theme.shadow.soft,
     },
     noticeBanner: {
       backgroundColor: theme.colors.noticeBg,
-      borderRadius: 18,
-      paddingHorizontal: 16,
-      paddingVertical: 13,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
       marginBottom: 14,
       borderWidth: 1,
       borderColor: theme.colors.noticeBorder,
@@ -480,9 +520,9 @@ function createStyles(theme, isLandscape) {
     },
     errorBanner: {
       backgroundColor: theme.colors.errorBg,
-      borderRadius: 18,
-      paddingHorizontal: 16,
-      paddingVertical: 13,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
       marginBottom: 14,
       borderWidth: 1,
       borderColor: theme.colors.errorBorder,
@@ -496,34 +536,34 @@ function createStyles(theme, isLandscape) {
     },
     bottomNav: {
       marginTop: 12,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 28,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      paddingHorizontal: 8,
-      paddingVertical: 8,
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      alignItems: 'center',
+      backgroundColor: theme.colors.surfaceElevated,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      paddingHorizontal: 7,
+      paddingVertical: 7,
       ...theme.shadow.card,
     },
     tabButton: {
       flex: 1,
-      flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 8,
-      paddingVertical: 12,
-      borderRadius: theme.radius.pill,
+      gap: 6,
+      paddingVertical: 11,
+      borderRadius: 18,
     },
     tabButtonActive: {
-      backgroundColor: theme.colors.accentSoft,
+      backgroundColor: theme.colors.surface,
     },
     tabLabel: {
       color: theme.colors.softText,
       fontWeight: '800',
+      fontSize: 12,
     },
     tabLabelActive: {
-      color: theme.colors.accent,
+      color: theme.colors.text,
     },
   });
 }

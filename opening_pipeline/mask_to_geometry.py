@@ -154,11 +154,7 @@ def convert_masks_to_geometry(
     annotated = original_bgr.copy()
 
     if len(doors) == 0 and len(windows) == 0:
-        raise ValueError(
-            "Empty mask(s): "
-            f"doors={len(doors)} windows={len(windows)}. "
-            "Refusing to generate outputs."
-        )
+        print("[WARN] No openings detected; generating wall-only geometry output")
 
     for d in doors:
         x, y, ww, hh = int(d["x"]), int(d["y"]), int(d["width"]), int(d["height"])
@@ -492,7 +488,7 @@ def convert_masks_to_geometry_from_folders(
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
 
     mode = parser.add_mutually_exclusive_group(required=False)
@@ -554,31 +550,31 @@ def main() -> None:
         print(f"[SUMMARY] succeeded={summary['succeeded']}")
         print(f"[SUMMARY] skipped={summary['skipped']}")
         print(f"[SUMMARY] failed={summary['failed']}")
-        return
+        return 0
 
     if not args.image:
         print("[ERROR] Missing required mode argument.")
         print("[ERROR] Provide either --original_dir (folder mode) or --image (single-image mode).")
         parser.print_help()
-        return
+        return 1
     if not args.door_mask or not args.window_mask:
         print("[ERROR] Single-image mode requires --door_mask and --window_mask")
         parser.print_help()
-        return
+        return 1
     if not args.out_json or not args.out_annotated:
         print("[ERROR] Single-image mode requires --out_json and --out_annotated")
         parser.print_help()
-        return
+        return 1
 
     if not Path(args.image).exists():
         print(f"[ERROR] Original image not found: {args.image}")
-        return
+        return 1
     if not Path(args.door_mask).exists():
         print(f"[ERROR] Door mask not found: {args.door_mask}")
-        return
+        return 1
     if not Path(args.window_mask).exists():
         print(f"[ERROR] Window mask not found: {args.window_mask}")
-        return
+        return 1
 
     walls_json_single: Optional[Path] = None
     if args.walls_dir:
@@ -640,10 +636,12 @@ def main() -> None:
         print(f"[OK] Wrote: {Path(args.out_json).name}")
         print(f"[OK] Wrote: {Path(args.out_annotated).name}")
         print("[SUMMARY] processed=1 succeeded=1 skipped=0 failed=0")
+        return 0
     except Exception as e:
         print(f"[ERROR] Failed: {e}")
         print("[SUMMARY] processed=1 succeeded=0 skipped=0 failed=1")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

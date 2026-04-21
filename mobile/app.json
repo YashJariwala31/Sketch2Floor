@@ -4,7 +4,7 @@
     "slug": "sketch2floorplan",
     "version": "1.0.0",
     "orientation": "default",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -13,13 +13,6 @@
         "expo-camera",
         {
           "cameraPermission": "Allow Sketch2FloorPlan to use your camera to capture floorplan sketches."
-        }
-      ],
-      [
-        "expo-media-library",
-        {
-          "photosPermission": "Allow Sketch2FloorPlan to access your photos so you can import floorplan sketches.",
-          "savePhotosPermission": "Allow Sketch2FloorPlan to save converted floorplans to your library."
         }
       ]
     ],

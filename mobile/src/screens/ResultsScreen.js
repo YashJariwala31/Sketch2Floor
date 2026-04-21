@@ -1,43 +1,76 @@
 import React, { useEffect, useRef } from 'react';
-import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 function statusMeta(job, theme) {
   if (job.status === 'completed') {
-    return {
-      color: theme.colors.success,
-      title: 'Your floorplan is ready',
-      text: 'The cleaned digital layout is available below and stays inside the app.',
-    };
+    return { color: theme.colors.success, label: 'Ready' };
   }
   if (job.status === 'processing') {
-    return {
-      color: theme.colors.warning,
-      title: 'We are refining your sketch',
-      text: 'Your upload is being processed now. This screen refreshes automatically while it runs.',
-    };
+    return { color: theme.colors.warning, label: 'Processing' };
   }
   if (job.status === 'queued') {
-    return {
-      color: theme.colors.accent,
-      title: 'Your job is queued',
-      text: 'The conversion is lined up and should begin shortly.',
-    };
+    return { color: theme.colors.accent, label: 'Queued' };
   }
   if (job.status === 'failed') {
-    return {
-      color: theme.colors.danger,
-      title: 'This project needs another try',
-      text: 'Something interrupted the conversion. Review the message below and try again.',
-    };
+    return { color: theme.colors.danger, label: 'Failed' };
   }
-  return {
-    color: theme.colors.accent,
-    title: 'Ready to create your floorplan',
-    text: 'Start processing when you want the app to turn this sketch into a cleaner layout.',
-  };
+  return { color: theme.colors.accent, label: 'Draft' };
 }
 
-export default function ResultsScreen({ job, busy, error, onBack, onRefresh, onStartJob, onDeleteJob, theme, isLandscape }) {
+function trimConsole(text) {
+  if (!text) {
+    return '';
+  }
+
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .slice(0, 8)
+    .join('\n');
+}
+
+function PreviewCard({ title, imageUrl, emptyLabel, resizeMode, height, styles, theme }) {
+  return (
+    <View style={styles.previewCard}>
+      <Text style={styles.previewLabel}>{title}</Text>
+      {imageUrl ? (
+        <Image source={{ uri: imageUrl }} style={[styles.previewImage, { height }]} resizeMode={resizeMode} />
+      ) : (
+        <View style={[styles.previewEmpty, { height }]}>
+          <Ionicons name="image-outline" size={22} color={theme.colors.softText} />
+          <Text style={styles.previewEmptyText}>{emptyLabel}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function ConsoleCard({ title, body, styles }) {
+  if (!body) {
+    return null;
+  }
+
+  return (
+    <View style={styles.consoleCard}>
+      <Text style={styles.consoleTitle}>{title}</Text>
+      <Text style={styles.consoleBody}>{body}</Text>
+    </View>
+  );
+}
+
+export default function ResultsScreen({
+  job,
+  busy,
+  error,
+  onBack,
+  onRefresh,
+  onStartJob,
+  onDeleteJob,
+  onSaveResult,
+  theme,
+  isLandscape,
+}) {
   const fade = useRef(new Animated.Value(0)).current;
   const rise = useRef(new Animated.Value(18)).current;
   const styles = createStyles(theme, isLandscape);
@@ -46,7 +79,7 @@ export default function ResultsScreen({ job, busy, error, onBack, onRefresh, onS
     Animated.parallel([
       Animated.timing(fade, {
         toValue: 1,
-        duration: 320,
+        duration: 300,
         useNativeDriver: true,
       }),
       Animated.spring(rise, {
@@ -61,47 +94,72 @@ export default function ResultsScreen({ job, busy, error, onBack, onRefresh, onS
   if (!job) {
     return (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyTitle}>No floorplan selected</Text>
-        <Text style={styles.emptyText} onPress={onBack}>
-          Go back to choose a result.
-        </Text>
+        <Text style={styles.emptyTitle}>No project</Text>
+        <Pressable onPress={onBack}>
+          <Text style={styles.emptyAction}>Back</Text>
+        </Pressable>
       </View>
     );
   }
 
-  const meta = statusMeta(job, theme);
+  const status = statusMeta(job, theme);
+  const mainPreview = job.combined_overlay_url || job.original_image_url;
+  const mainTitle = job.combined_overlay_url ? 'Floorplan' : job.status === 'failed' ? 'Sketch' : 'Preview';
+  const primaryError = error || job.metadata?.error;
+  const stderrPreview = trimConsole(job.metadata?.stderr);
 
   return (
     <Animated.View style={{ flex: 1, opacity: fade, transform: [{ translateY: rise }] }}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroCard}>
-          <View style={styles.heroTop}>
-            <Pressable style={styles.backButton} onPress={onBack}>
-              <Text style={styles.backButtonText}>Back</Text>
-            </Pressable>
-            <View style={[styles.statusPill, { backgroundColor: `${meta.color}14` }]}>
-              <View style={[styles.statusDot, { backgroundColor: meta.color }]} />
-              <Text style={[styles.statusText, { color: meta.color }]}>{job.status}</Text>
-            </View>
+        <View style={styles.toolbar}>
+          <Pressable style={styles.backButton} onPress={onBack}>
+            <Ionicons name="chevron-back" size={16} color={theme.colors.text} />
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
+
+          <View style={[styles.statusBadge, { backgroundColor: `${status.color}18` }]}>
+            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+            <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
           </View>
+        </View>
 
-          <Text style={styles.title}>{job.name || `Job #${job.id}`}</Text>
-          <Text style={styles.heroSubtitle}>{meta.title}</Text>
-          <Text style={styles.heroText}>{meta.text}</Text>
+        <Text style={styles.title} numberOfLines={2}>
+          {job.name || 'Floorplan'}
+        </Text>
 
-          <View style={styles.actions}>
-            <Pressable style={styles.primaryButton} onPress={onRefresh}>
-              <Text style={styles.primaryButtonText}>Refresh</Text>
+        <View style={styles.heroPanel}>
+          <PreviewCard
+            title={mainTitle}
+            imageUrl={mainPreview}
+            emptyLabel={job.status === 'failed' ? 'Retry needed' : 'Rendering'}
+            resizeMode={job.combined_overlay_url ? 'contain' : 'cover'}
+            height={isLandscape ? 360 : 430}
+            styles={styles}
+            theme={theme}
+          />
+
+          <View style={styles.actionRow}>
+            <Pressable style={styles.secondaryAction} onPress={onRefresh}>
+              <Ionicons name="refresh" size={16} color={theme.colors.text} />
+              <Text style={styles.secondaryActionText}>Refresh</Text>
             </Pressable>
-            {job.status === 'draft' || job.status === 'failed' ? (
-              <Pressable style={styles.secondaryButton} onPress={onStartJob} disabled={busy}>
-                <Text style={styles.secondaryButtonText}>
-                  {busy ? 'Starting...' : job.status === 'failed' ? 'Try Again' : 'Start Processing'}
-                </Text>
+
+            {job.combined_overlay_url ? (
+              <Pressable style={styles.primaryAction} onPress={() => onSaveResult(job.combined_overlay_url)} disabled={busy}>
+                <Ionicons name="download-outline" size={16} color="#ffffff" />
+                <Text style={styles.primaryActionText}>{busy ? 'Preparing' : 'Download'}</Text>
               </Pressable>
             ) : null}
+
+            {(job.status === 'draft' || job.status === 'failed') ? (
+              <Pressable style={styles.primaryAction} onPress={onStartJob} disabled={busy}>
+                <Ionicons name="play-outline" size={16} color="#ffffff" />
+                <Text style={styles.primaryActionText}>{busy ? 'Starting' : 'Retry'}</Text>
+              </Pressable>
+            ) : null}
+
             <Pressable
-              style={styles.deleteButton}
+              style={styles.deleteAction}
               onPress={() =>
                 Alert.alert('Delete project', 'Remove this floorplan project permanently?', [
                   { text: 'Cancel', style: 'cancel' },
@@ -109,103 +167,68 @@ export default function ResultsScreen({ job, busy, error, onBack, onRefresh, onS
                 ])
               }
             >
-              <Text style={styles.deleteButtonText}>Delete</Text>
+              <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
             </Pressable>
           </View>
         </View>
 
-        {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Something needs attention</Text>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
+        <View style={[styles.bottomSection, isLandscape ? styles.bottomSectionLandscape : null]}>
+          <PreviewCard
+            title="Source"
+            imageUrl={job.original_image_url}
+            emptyLabel="No image"
+            resizeMode="cover"
+            height={isLandscape ? 230 : 210}
+            styles={styles}
+            theme={theme}
+          />
 
-        {job.status === 'failed' && job.metadata?.error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Processing error</Text>
-            <Text style={styles.errorText}>{job.metadata.error}</Text>
+          <View style={styles.consoleStack}>
+            <ConsoleCard title="Error" body={primaryError} styles={styles} />
+            <ConsoleCard title="Details" body={stderrPreview} styles={styles} />
           </View>
-        ) : null}
-
-        {job.status === 'failed' && job.metadata?.stderr ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Backend details</Text>
-            <Text style={styles.errorText}>{job.metadata.stderr}</Text>
-          </View>
-        ) : null}
-
-        {job.original_image_url ? (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Captured Sketch</Text>
-            <Image source={{ uri: job.original_image_url }} style={styles.previewImage} resizeMode="cover" />
-            <Text style={styles.caption}>The original sketch captured from your camera.</Text>
-          </View>
-        ) : null}
-
-        {job.combined_overlay_url ? (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Final Floorplan</Text>
-            <Image source={{ uri: job.combined_overlay_url }} style={styles.previewImageLarge} resizeMode="contain" />
-            <Text style={styles.caption}>Your final result is shown here inside the app.</Text>
-          </View>
-        ) : null}
-
-        {!job.combined_overlay_url ? (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>{job.status === 'failed' ? 'Conversion paused' : 'Your result is on the way'}</Text>
-            <Text style={styles.heroText}>
-              {job.status === 'failed'
-                ? 'The backend reported a problem while creating the final floorplan. You can retry after checking the error above.'
-                : 'We are refining your sketch into a cleaner floorplan view. Refresh in a moment to check the latest result.'}
-            </Text>
-          </View>
-        ) : null}
+        </View>
       </ScrollView>
     </Animated.View>
   );
 }
 
 function createStyles(theme, isLandscape) {
-  return StyleSheet.create({
+  const styles = StyleSheet.create({
     content: {
-      paddingBottom: 28,
-      paddingHorizontal: isLandscape ? 8 : 0,
+      paddingBottom: 30,
     },
-    heroCard: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: theme.radius.lg,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      padding: theme.spacing.xl,
-      marginBottom: theme.spacing.md,
-      ...theme.shadow.card,
-    },
-    heroTop: {
+    toolbar: {
       flexDirection: 'row',
-      alignItems: 'center',
       justifyContent: 'space-between',
+      alignItems: 'center',
       marginBottom: 16,
     },
     backButton: {
-      backgroundColor: theme.colors.surfaceAlt,
-      borderRadius: theme.radius.pill,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
       paddingHorizontal: 14,
       paddingVertical: 10,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.surfaceElevated,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.colors.borderStrong,
     },
-    backButtonText: {
+    backText: {
       color: theme.colors.text,
       fontWeight: '800',
     },
-    statusPill: {
+    statusBadge: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      borderRadius: theme.radius.pill,
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: 9,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
     },
     statusDot: {
       width: 8,
@@ -213,111 +236,130 @@ function createStyles(theme, isLandscape) {
       borderRadius: 4,
     },
     statusText: {
-      fontWeight: '800',
-      textTransform: 'capitalize',
+      fontWeight: '900',
+      fontSize: 12,
     },
     title: {
       color: theme.colors.text,
-      fontSize: isLandscape ? 26 : 28,
+      fontSize: isLandscape ? 35 : 32,
       fontWeight: '900',
-      letterSpacing: -0.6,
+      letterSpacing: -1,
+      marginBottom: 18,
     },
-    heroSubtitle: {
-      marginTop: 10,
-      color: theme.colors.text,
-      fontSize: 17,
-      fontWeight: '800',
-    },
-    heroText: {
-      marginTop: 8,
-      color: theme.colors.muted,
-      lineHeight: 22,
-    },
-    actions: {
-      flexDirection: 'row',
-      gap: 12,
-      marginTop: 20,
-      flexWrap: 'wrap',
-    },
-    primaryButton: {
-      backgroundColor: theme.colors.accent,
-      paddingHorizontal: 18,
-      paddingVertical: 14,
-      borderRadius: theme.radius.pill,
-      ...theme.shadow.soft,
-    },
-    primaryButtonText: {
-      color: '#ffffff',
-      fontWeight: '800',
-    },
-    secondaryButton: {
-      backgroundColor: theme.colors.surfaceAlt,
-      paddingHorizontal: 18,
-      paddingVertical: 14,
-      borderRadius: theme.radius.pill,
-    },
-    secondaryButtonText: {
-      color: theme.colors.text,
-      fontWeight: '800',
-    },
-    deleteButton: {
-      backgroundColor: theme.colors.destructiveSoft,
-      paddingHorizontal: 18,
-      paddingVertical: 14,
-      borderRadius: theme.radius.pill,
-    },
-    deleteButtonText: {
-      color: theme.colors.danger,
-      fontWeight: '800',
-    },
-    card: {
-      backgroundColor: theme.colors.card,
-      borderRadius: theme.radius.md,
+    heroPanel: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.xl,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      padding: theme.spacing.lg,
-      marginBottom: theme.spacing.md,
-      ...theme.shadow.soft,
+      padding: 14,
+      marginBottom: 16,
+      ...theme.shadow.float,
     },
-    sectionTitle: {
-      color: theme.colors.text,
-      fontSize: 19,
-      fontWeight: '900',
-      marginBottom: 14,
+    previewCard: {
+      flex: 1,
+      backgroundColor: theme.colors.heroTint,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: 12,
+      overflow: 'hidden',
+    },
+    previewLabel: {
+      color: theme.colors.softText,
+      fontWeight: '800',
+      fontSize: 12,
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: 12,
     },
     previewImage: {
       width: '100%',
-      height: isLandscape ? 260 : 220,
-      borderRadius: 22,
-      backgroundColor: theme.colors.surfaceAlt,
+      borderRadius: 20,
+      backgroundColor: theme.colors.surface,
     },
-    previewImageLarge: {
-      width: '100%',
-      height: isLandscape ? 400 : 320,
-      borderRadius: 22,
-      backgroundColor: theme.colors.surfaceAlt,
+    previewEmpty: {
+      borderRadius: 20,
+      backgroundColor: theme.colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
     },
-    caption: {
-      marginTop: 12,
+    previewEmptyText: {
       color: theme.colors.softText,
-      lineHeight: 20,
+      fontWeight: '800',
     },
-    errorCard: {
-      backgroundColor: theme.colors.errorBg,
-      borderRadius: theme.radius.md,
+    actionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 14,
+    },
+    primaryAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 18,
+      paddingVertical: 13,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.accent,
+    },
+    primaryActionText: {
+      color: '#ffffff',
+      fontWeight: '900',
+    },
+    secondaryAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+    },
+    secondaryActionText: {
+      color: theme.colors.text,
+      fontWeight: '800',
+    },
+    deleteAction: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.destructiveSoft,
       borderWidth: 1,
       borderColor: theme.colors.errorBorder,
-      padding: theme.spacing.lg,
-      marginBottom: theme.spacing.md,
     },
-    errorTitle: {
+    bottomSection: {
+      gap: 16,
+    },
+    bottomSectionLandscape: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+    consoleStack: {
+      flex: isLandscape ? 0.9 : 1,
+      gap: 12,
+    },
+    consoleCard: {
+      backgroundColor: theme.colors.surfaceAlt,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: theme.colors.errorBorder,
+      padding: 16,
+    },
+    consoleTitle: {
       color: theme.colors.danger,
       fontWeight: '900',
-      marginBottom: 6,
+      marginBottom: 10,
     },
-    errorText: {
-      color: theme.colors.danger,
-      lineHeight: 20,
+    consoleBody: {
+      color: theme.colors.muted,
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      fontSize: 12,
+      lineHeight: 18,
     },
     emptyState: {
       flex: 1,
@@ -331,9 +373,11 @@ function createStyles(theme, isLandscape) {
       fontWeight: '900',
       marginBottom: 10,
     },
-    emptyText: {
+    emptyAction: {
       color: theme.colors.accentStrong,
       fontWeight: '800',
     },
   });
+
+  return styles;
 }

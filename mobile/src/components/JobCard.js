@@ -15,20 +15,36 @@ function getStatusColor(status, theme) {
   return theme.colors.accent;
 }
 
-function getStatusCopy(status) {
+function getStatusLabel(status) {
   if (status === 'completed') {
-    return 'Ready to open';
+    return 'Ready';
   }
   if (status === 'failed') {
-    return 'Needs attention';
+    return 'Issue';
   }
   if (status === 'processing') {
-    return 'Pipeline is running';
+    return 'Live';
   }
   if (status === 'queued') {
-    return 'Waiting to start';
+    return 'Queued';
   }
-  return 'Draft created';
+  return 'Draft';
+}
+
+function formatDate(value) {
+  if (!value) {
+    return 'Just now';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Just now';
+  }
+
+  return date.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+  });
 }
 
 export default function JobCard({ job, onPress, onDelete, theme, isLandscape }) {
@@ -40,61 +56,66 @@ export default function JobCard({ job, onPress, onDelete, theme, isLandscape }) 
     Animated.parallel([
       Animated.timing(fade, {
         toValue: 1,
-        duration: 350,
+        duration: 300,
         useNativeDriver: true,
       }),
       Animated.timing(rise, {
         toValue: 0,
-        duration: 350,
+        duration: 300,
         useNativeDriver: true,
       }),
     ]).start();
   }, [fade, rise]);
 
   const statusColor = getStatusColor(job.status, theme);
+  const previewUri = job.combined_overlay_url || job.original_image_url;
 
   return (
     <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
-      <Pressable style={styles.card} onPress={onPress}>
-        {job.combined_overlay_url || job.original_image_url ? (
-          <Image
-            source={{ uri: job.combined_overlay_url || job.original_image_url }}
-            style={styles.preview}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.previewPlaceholder}>
-            <Text style={styles.previewPlaceholderText}>Floorplan preview</Text>
-          </View>
-        )}
+      <Pressable style={[styles.card, isLandscape ? styles.cardLandscape : null]} onPress={onPress}>
+        <View style={[styles.previewWrap, isLandscape ? styles.previewWrapLandscape : null]}>
+          {previewUri ? (
+            <Image source={{ uri: previewUri }} style={styles.preview} resizeMode="cover" />
+          ) : (
+            <View style={styles.previewPlaceholder}>
+              <View style={styles.placeholderLineLong} />
+              <View style={styles.placeholderLineShort} />
+              <View style={styles.placeholderBox} />
+            </View>
+          )}
 
-        <View style={styles.topRow}>
-          <View style={[styles.dotWrap, { backgroundColor: `${statusColor}12` }]}>
-            <View style={[styles.dot, { backgroundColor: statusColor }]} />
+          <View style={[styles.statusPill, { backgroundColor: `${statusColor}18` }]}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <Text style={[styles.statusText, { color: statusColor }]}>{getStatusLabel(job.status)}</Text>
           </View>
-          <View style={styles.textWrap}>
-            <Text style={styles.title}>{job.name || 'Untitled Project'}</Text>
-            <Text style={styles.subtitle}>{job.original_filename || 'Captured floorplan sketch'}</Text>
-          </View>
-          <View style={[styles.badge, { backgroundColor: `${statusColor}14` }]}>
-            <Text style={[styles.badgeText, { color: statusColor }]}>{job.status}</Text>
-          </View>
+
+          {onDelete ? (
+            <Pressable
+              style={styles.deleteButton}
+              onPress={(event) => {
+                event.stopPropagation?.();
+                onDelete();
+              }}
+            >
+              <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
+            </Pressable>
+          ) : null}
         </View>
 
-        <Text style={styles.description}>
-          {job.description || 'Open this project to view the latest floorplan result.'}
-        </Text>
+        <View style={styles.content}>
+          <View style={styles.titleRow}>
+            <Text style={styles.title} numberOfLines={1}>
+              {job.name || 'Untitled'}
+            </Text>
+            <Ionicons name="arrow-forward" size={18} color={theme.colors.softText} />
+          </View>
 
-        <View style={styles.footer}>
-          <Text style={styles.footerLabel}>{getStatusCopy(job.status)}</Text>
-          <View style={styles.footerActions}>
-            {onDelete ? (
-              <Pressable style={styles.deleteButton} onPress={onDelete}>
-                <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
-                <Text style={styles.deleteText}>Delete</Text>
-              </Pressable>
-            ) : null}
-            <Text style={styles.footerLink}>View project</Text>
+          <View style={styles.metaRow}>
+            <Text style={styles.metaText}>{formatDate(job.created_at)}</Text>
+            <Text style={styles.metaDivider}>/</Text>
+            <Text style={styles.metaText} numberOfLines={1}>
+              {job.original_filename || 'Sketch'}
+            </Text>
           </View>
         </View>
       </Pressable>
@@ -106,109 +127,131 @@ function createStyles(theme, isLandscape) {
   return StyleSheet.create({
     card: {
       backgroundColor: theme.colors.card,
-      borderRadius: theme.radius.md,
+      borderRadius: 30,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      padding: theme.spacing.md,
+      padding: 13,
       marginBottom: theme.spacing.md,
+      overflow: 'hidden',
       ...theme.shadow.card,
+    },
+    cardLandscape: {
+      flexDirection: 'row',
+      gap: 14,
+      alignItems: 'stretch',
+    },
+    previewWrap: {
+      position: 'relative',
+      marginBottom: 12,
+    },
+    previewWrapLandscape: {
+      width: '42%',
+      marginBottom: 0,
     },
     preview: {
       width: '100%',
-      height: isLandscape ? 190 : 148,
-      borderRadius: 16,
-      marginBottom: 14,
+      height: isLandscape ? 172 : 208,
+      borderRadius: 24,
       backgroundColor: theme.colors.surfaceAlt,
     },
     previewPlaceholder: {
       width: '100%',
-      height: 128,
-      borderRadius: 16,
-      marginBottom: 14,
-      backgroundColor: theme.colors.surfaceAlt,
+      height: isLandscape ? 172 : 208,
+      borderRadius: 24,
+      backgroundColor: theme.colors.heroTint,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: 18,
+      justifyContent: 'space-between',
+    },
+    placeholderLineLong: {
+      width: '58%',
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: theme.colors.canvasLine,
+    },
+    placeholderLineShort: {
+      width: '34%',
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: theme.colors.canvasLine,
+    },
+    placeholderBox: {
+      width: '38%',
+      height: '34%',
+      alignSelf: 'flex-end',
+      borderRadius: 18,
+      borderWidth: 2,
+      borderColor: theme.colors.canvasLine,
+    },
+    statusPill: {
+      position: 'absolute',
+      left: 10,
+      top: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 11,
+      paddingVertical: 8,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+    },
+    statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    statusText: {
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    deleteButton: {
+      position: 'absolute',
+      right: 10,
+      top: 10,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
     },
-    previewPlaceholderText: {
-      color: theme.colors.softText,
-      fontWeight: '700',
+    content: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: isLandscape ? 4 : 2,
     },
-    topRow: {
+    titleRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      marginBottom: 12,
-    },
-    dotWrap: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.surfaceAlt,
-    },
-    dot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-    },
-    textWrap: {
-      flex: 1,
+      marginBottom: 8,
     },
     title: {
+      flex: 1,
       color: theme.colors.text,
-      fontSize: 17,
-      fontWeight: '800',
+      fontSize: 21,
+      fontWeight: '900',
+      letterSpacing: -0.5,
     },
-    subtitle: {
-      color: theme.colors.softText,
-      marginTop: 4,
-      fontSize: 13,
+    metaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
     },
-    badge: {
-      borderRadius: theme.radius.pill,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-    },
-    badgeText: {
-      textTransform: 'capitalize',
-      fontWeight: '800',
-      fontSize: 12,
-    },
-    description: {
+    metaText: {
       color: theme.colors.muted,
-      lineHeight: 21,
+      fontWeight: '700',
+      fontSize: 13,
+      flexShrink: 1,
     },
-    footer: {
-      marginTop: 14,
-      paddingTop: 14,
-      borderTopWidth: 1,
-      borderTopColor: theme.colors.border,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-    footerActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 14,
-    },
-    footerLabel: {
+    metaDivider: {
       color: theme.colors.softText,
       fontWeight: '700',
-    },
-    deleteButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-    },
-    deleteText: {
-      color: theme.colors.danger,
-      fontWeight: '800',
-    },
-    footerLink: {
-      color: theme.colors.accentStrong,
-      fontWeight: '800',
     },
   });
 }
