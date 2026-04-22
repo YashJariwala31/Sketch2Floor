@@ -49,9 +49,6 @@ def main():
             with open(walls_path, "r", encoding="utf-8") as f:
                 walls = json.load(f)
 
-    if walls is not None:
-        config['walls'] = walls
-
     # Load room polygons for per-room door orientation
     rooms_path_cfg = config.get("paths", {}).get("rooms")
     room_polygons = None
@@ -72,6 +69,7 @@ def main():
     for det in geometry.get('doors', []):
         placed.append(place_single_door(
             template, det, TEMPLATE_HEIGHT,
+            walls=walls,
             room_polygons=room_polygons,
             image_width=img_w,
             image_height=img_h,

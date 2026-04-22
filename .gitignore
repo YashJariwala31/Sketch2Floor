@@ -6,15 +6,15 @@ __pycache__/
 *$py.class
 
 # Virtual environments
-.venv/
-backend/.venv/
-venv/
-env/
+/.venv/
+/backend/.venv/
+/venv/
+/env/
 .python-version
 
 # Environment files
-.env
-.env.*
+/.env
+/.env.*
 !.env.example
 !backend/.env.example
 
@@ -29,37 +29,36 @@ env/
 # =========================
 # DATA & OUTPUTS (GENERATED)
 # =========================
-predictions/
-original/
-intermediate/
-outputs/
-data/
-tmp_reference/
-designs/
-backend/media/
-backend/staticfiles/
-backend/db.sqlite3
-mobile/.expo/
-mobile/.expo-shared/
-mobile/node_modules/
-mobile/web-build/
-mobile/dist/
+/predictions/
+/original/
+/intermediate/
+/outputs/
+/tmp_reference/
+/designs/
+/backend/media/
+/backend/staticfiles/
+/backend/db.sqlite3
+/mobile/.expo/
+/mobile/.expo-shared/
+/mobile/node_modules/
+/mobile/web-build/
+/mobile/dist/
 
-placed_doors.json
-opening_pipeline/placed_doors.json
-opening_pipeline/*_annotated.png
-opening_pipeline/*_geometry.json
-opening_pipeline/*_door.png
-opening_pipeline/*_window.png
+/placed_doors.json
+/opening_pipeline/placed_doors.json
+/opening_pipeline/*_annotated.png
+/opening_pipeline/*_geometry.json
+/opening_pipeline/*_door.png
+/opening_pipeline/*_window.png
 
 # Wall pipeline generated outputs
-wall_pipeline/data/intermediate/
+/wall_pipeline/data/intermediate/
 
 # =========================
 # BUILD / DISTRIBUTION
 # =========================
-build/
-dist/
+/build/
+/dist/
 *.egg-info/
 
 # =========================
@@ -73,8 +72,8 @@ pnpm-debug.log*
 # =========================
 # IDE / EDITOR
 # =========================
-.vscode/
-.idea/
+/.vscode/
+/.idea/
 
 # =========================
 # OS FILES
@@ -92,8 +91,8 @@ Thumbs.db
 # =========================
 *.tmp
 *.cache
-node_modules
-coverage/
+/node_modules/
+/coverage/
 .coverage
 .coverage.*
 .pytest_cache/
@@ -103,5 +102,5 @@ coverage/
 # =========================
 # APP BUILDS
 # =========================
-mobile/android/
-mobile/ios/
+/mobile/android/
+/mobile/ios/
