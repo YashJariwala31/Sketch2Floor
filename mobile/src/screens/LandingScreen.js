@@ -1,27 +1,16 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-export default function LandingScreen({ theme, isLandscape, onLogin, onSignUp }) {
-  const fade = useRef(new Animated.Value(0)).current;
-  const rise = useRef(new Animated.Value(18)).current;
-  const styles = createStyles(theme, isLandscape);
+import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 320,
-        useNativeDriver: true,
-      }),
-      Animated.spring(rise, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 15,
-        stiffness: 140,
-      }),
-    ]).start();
-  }, [fade, rise]);
+export default function LandingScreen({ theme, isLandscape, onLogin, onSignUp }) {
+  const animatedStyle = useEntranceAnimation({
+    duration: 320,
+    damping: 15,
+    stiffness: 140,
+  });
+  const styles = createStyles(theme, isLandscape);
 
   return (
     <View style={styles.screen}>
@@ -43,7 +32,7 @@ export default function LandingScreen({ theme, isLandscape, onLogin, onSignUp })
         </View>
       </View>
 
-      <Animated.View style={[styles.heroWrap, { opacity: fade, transform: [{ translateY: rise }] }]}>
+      <Animated.View style={[styles.heroWrap, animatedStyle]}>
         <Text style={styles.heroLine}>
           <Text style={styles.heroPrimary}>Turn Sketches</Text>
         </Text>

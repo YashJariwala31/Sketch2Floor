@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import subprocess
@@ -10,7 +9,7 @@ from pathlib import Path
 from django.conf import settings
 
 from .models import FloorplanJob
-from .services import build_expected_output_paths
+from .services import build_expected_output_paths, get_source_stem
 
 
 REPO_ROOT = Path(settings.BASE_DIR).parent
@@ -64,25 +63,29 @@ def _check_pipeline_dependencies():
 
 
 def _job_output_roots(job: FloorplanJob):
-    source_stem = job.metadata.get('source_stem') or Path(job.original_filename or f'job_{job.id}').stem
+    source_stem = job.metadata.get('source_stem') or get_source_stem(job.original_filename, f'job_{job.id}')
     planned = build_expected_output_paths(job.id, source_stem)
     return source_stem, {key: Path(value) for key, value in planned.items()}
+
+
+def _pipeline_outputs(source_stem: str):
+    return {
+        'door_mask_path': REPO_ROOT / 'predictions' / f'{source_stem}_door.png',
+        'window_mask_path': REPO_ROOT / 'predictions' / f'{source_stem}_window.png',
+        'geometry_path': REPO_ROOT / 'predictions' / f'{source_stem}_geometry.json',
+        'overlay_path': REPO_ROOT / 'predictions' / f'overlay_{source_stem}.png',
+        'combined_overlay_path': REPO_ROOT / 'predictions' / f'combined_overlay_{source_stem}.png',
+        'wall_polygons_path': REPO_ROOT / 'intermediate' / 'wall_polygons.json',
+        'room_polygons_path': REPO_ROOT / 'intermediate' / 'room_polygons.json',
+        'fused_floorplan_path': REPO_ROOT / 'intermediate' / 'floorplan_fused.json',
+    }
 
 
 def seed_demo_job(job: FloorplanJob):
     source_stem, planned = _job_output_roots(job)
     sample_stem = '36'
 
-    samples = {
-        'door_mask_path': REPO_ROOT / 'predictions' / f'{sample_stem}_door.png',
-        'window_mask_path': REPO_ROOT / 'predictions' / f'{sample_stem}_window.png',
-        'geometry_path': REPO_ROOT / 'predictions' / f'{sample_stem}_geometry.json',
-        'overlay_path': REPO_ROOT / 'predictions' / f'overlay_{sample_stem}.png',
-        'combined_overlay_path': REPO_ROOT / 'predictions' / f'combined_overlay_{sample_stem}.png',
-        'wall_polygons_path': REPO_ROOT / 'intermediate' / 'wall_polygons.json',
-        'room_polygons_path': REPO_ROOT / 'intermediate' / 'room_polygons.json',
-        'fused_floorplan_path': REPO_ROOT / 'intermediate' / 'floorplan_fused.json',
-    }
+    samples = _pipeline_outputs(sample_stem)
 
     for field, sample_path in samples.items():
         _copy_if_exists(sample_path, planned[field])
@@ -100,17 +103,7 @@ def seed_demo_job(job: FloorplanJob):
 
 def _sync_pipeline_outputs(job: FloorplanJob):
     source_stem, planned = _job_output_roots(job)
-
-    outputs = {
-        'door_mask_path': REPO_ROOT / 'predictions' / f'{source_stem}_door.png',
-        'window_mask_path': REPO_ROOT / 'predictions' / f'{source_stem}_window.png',
-        'geometry_path': REPO_ROOT / 'predictions' / f'{source_stem}_geometry.json',
-        'overlay_path': REPO_ROOT / 'predictions' / f'overlay_{source_stem}.png',
-        'combined_overlay_path': REPO_ROOT / 'predictions' / f'combined_overlay_{source_stem}.png',
-        'wall_polygons_path': REPO_ROOT / 'intermediate' / 'wall_polygons.json',
-        'room_polygons_path': REPO_ROOT / 'intermediate' / 'room_polygons.json',
-        'fused_floorplan_path': REPO_ROOT / 'intermediate' / 'floorplan_fused.json',
-    }
+    outputs = _pipeline_outputs(source_stem)
 
     copied = {}
     for field, src in outputs.items():
@@ -134,7 +127,7 @@ def process_floorplan_job(job_id: int):
         job.save(update_fields=['status', 'metadata', 'updated_at'])
         return
 
-    source_stem, _planned = _job_output_roots(job)
+    source_stem, _ = _job_output_roots(job)
     image_path = Path(job.original_image.path)
     python = sys.executable
     missing_dependencies = _check_pipeline_dependencies()

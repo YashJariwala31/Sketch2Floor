@@ -1,6 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 
 function ActionButton({ icon, label, primary, onPress, disabled, styles, theme }) {
   return (
@@ -33,29 +35,17 @@ function UploadPreview({ styles, theme }) {
 }
 
 export default function UploadCaptureScreen({ busy, onPickFromGallery, onOpenCamera, onBack, theme, isLandscape }) {
-  const fade = useRef(new Animated.Value(0)).current;
-  const rise = useRef(new Animated.Value(16)).current;
+  const animatedStyle = useEntranceAnimation({
+    distance: 16,
+    duration: 280,
+    damping: 16,
+    stiffness: 150,
+  });
   const styles = createStyles(theme, isLandscape);
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 280,
-        useNativeDriver: true,
-      }),
-      Animated.spring(rise, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 16,
-        stiffness: 150,
-      }),
-    ]).start();
-  }, [fade, rise]);
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
+      <Animated.View style={animatedStyle}>
         <View style={styles.headerRow}>
           <Pressable style={styles.backButton} onPress={onBack}>
             <Ionicons name="chevron-back" size={18} color={theme.colors.text} />

@@ -10,11 +10,13 @@ function detectApiHost() {
   ];
 
   for (const candidate of expoHostCandidates) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      const host = candidate.split(':')[0];
-      if (host) {
-        return host;
-      }
+    if (typeof candidate !== 'string' || candidate.length === 0) {
+      continue;
+    }
+
+    const host = candidate.split(':')[0];
+    if (host) {
+      return host;
     }
   }
 
@@ -26,23 +28,11 @@ function detectApiHost() {
     }
   }
 
-  if (Platform.OS === 'android') {
-    return '10.0.2.2';
-  }
-
-  return '127.0.0.1';
+  return Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
 }
 
 const API_HOST = detectApiHost();
 const API_BASE_URL = `http://${API_HOST}:8000/api`;
-
-export function getApiBaseUrl() {
-  return API_BASE_URL;
-}
-
-export function getApiHost() {
-  return API_HOST;
-}
 
 async function readJson(response) {
   const text = await response.text();
@@ -62,15 +52,28 @@ function buildNetworkError(err) {
   return err;
 }
 
+async function request(path, options) {
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, options);
+  } catch (err) {
+    throw buildNetworkError(err);
+  }
+}
+
+async function requestJson(path, options, fallbackMessage) {
+  const response = await request(path, options);
+  const data = await readJson(response);
+
+  if (!response.ok) {
+    throw new Error(data?.detail || `${fallbackMessage} with ${response.status}`);
+  }
+
+  return data;
+}
+
 export async function testBackendConnection() {
   try {
-    const response = await fetch(`${API_BASE_URL}/health/`);
-    const data = await readJson(response);
-
-    if (!response.ok) {
-      throw new Error(`Backend request failed with ${response.status}`);
-    }
-
+    const data = await requestJson('/health/', undefined, 'Backend request failed');
     return {
       ok: true,
       apiBaseUrl: API_BASE_URL,
@@ -78,89 +81,62 @@ export async function testBackendConnection() {
       data,
     };
   } catch (err) {
-    const parsed = buildNetworkError(err);
     return {
       ok: false,
       apiBaseUrl: API_BASE_URL,
       apiHost: API_HOST,
-      error: parsed.message || 'Unable to reach backend',
+      error: err.message || 'Unable to reach backend',
     };
   }
 }
 
 export async function fetchJobs() {
-  try {
-    const response = await fetch(`${API_BASE_URL}/jobs/`);
-    if (!response.ok) {
-      throw new Error(`Backend request failed with ${response.status}`);
-    }
-    const data = await readJson(response);
-    return Array.isArray(data) ? data : [];
-  } catch (err) {
-    throw buildNetworkError(err);
-  }
+  const data = await requestJson('/jobs/', undefined, 'Backend request failed');
+  return Array.isArray(data) ? data : [];
 }
 
 export async function createJobWithImage({ name, description, imageUri, imageName, mimeType }) {
-  try {
-    const form = new FormData();
-    if (name) {
-      form.append('name', name);
-    }
-    if (description) {
-      form.append('description', description);
-    }
-    form.append('original_image', {
-      uri: imageUri,
-      name: imageName || 'floorplan.jpg',
-      type: mimeType || 'image/jpeg',
-    });
+  const form = new FormData();
+  if (name) {
+    form.append('name', name);
+  }
+  if (description) {
+    form.append('description', description);
+  }
+  form.append('original_image', {
+    uri: imageUri,
+    name: imageName || 'floorplan.jpg',
+    type: mimeType || 'image/jpeg',
+  });
 
-    const response = await fetch(`${API_BASE_URL}/jobs/`, {
+  return requestJson(
+    '/jobs/',
+    {
       method: 'POST',
       body: form,
-    });
-
-    const data = await readJson(response);
-    if (!response.ok) {
-      throw new Error(data?.detail || `Job creation failed with ${response.status}`);
-    }
-
-    return data;
-  } catch (err) {
-    throw buildNetworkError(err);
-  }
+    },
+    'Job creation failed'
+  );
 }
 
 export async function startJob(jobId) {
-  try {
-    const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/start/`, {
+  return requestJson(
+    `/jobs/${jobId}/start/`,
+    {
       method: 'POST',
-    });
-
-    const data = await readJson(response);
-    if (!response.ok) {
-      throw new Error(data?.detail || `Job start failed with ${response.status}`);
-    }
-
-    return data;
-  } catch (err) {
-    throw buildNetworkError(err);
-  }
+    },
+    'Job start failed'
+  );
 }
 
 export async function deleteJob(jobId) {
-  try {
-    const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/`, {
-      method: 'DELETE',
-    });
+  const response = await request(`/jobs/${jobId}/`, {
+    method: 'DELETE',
+  });
 
-    if (!response.ok) {
-      throw new Error(`Job delete failed with ${response.status}`);
-    }
-
-    return true;
-  } catch (err) {
-    throw buildNetworkError(err);
+  if (!response.ok) {
+    throw new Error(`Job delete failed with ${response.status}`);
   }
+
+  return true;
 }

@@ -7,8 +7,10 @@ __pycache__/
 
 # Virtual environments
 .venv/
+backend/.venv/
 venv/
 env/
+.python-version
 
 # Environment files
 .env
@@ -32,12 +34,16 @@ original/
 intermediate/
 outputs/
 data/
+tmp_reference/
+designs/
 backend/media/
 backend/staticfiles/
 backend/db.sqlite3
 mobile/.expo/
 mobile/.expo-shared/
 mobile/node_modules/
+mobile/web-build/
+mobile/dist/
 
 placed_doors.json
 opening_pipeline/placed_doors.json
@@ -88,6 +94,8 @@ Thumbs.db
 *.cache
 node_modules
 coverage/
+.coverage
+.coverage.*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

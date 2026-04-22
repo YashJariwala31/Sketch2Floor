@@ -1,5 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 
 function blueprint(styles) {
   return (
@@ -44,29 +46,12 @@ function Pill({ label, styles }) {
 }
 
 export default function HomeScreen({ busy, onOpenUploadScreen, onCaptureImage, theme, isLandscape }) {
-  const fade = useRef(new Animated.Value(0)).current;
-  const rise = useRef(new Animated.Value(18)).current;
+  const animatedStyle = useEntranceAnimation();
   const styles = createStyles(theme, isLandscape);
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.spring(rise, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 15,
-        stiffness: 145,
-      }),
-    ]).start();
-  }, [fade, rise]);
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
+      <Animated.View style={animatedStyle}>
         <Text style={styles.title}>Sketch2FloorPlan</Text>
         <Text style={styles.subtitle}>AI floor plan digitizer</Text>
 

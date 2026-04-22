@@ -2,32 +2,10 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Alert, Animated, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-function statusMeta(job, theme) {
-  if (job.status === 'completed') {
-    return { label: 'Ready', fill: theme.colors.successSoft, text: theme.colors.success };
-  }
-  if (job.status === 'processing' || job.status === 'queued') {
-    return { label: 'AI scan active', fill: theme.colors.accentSoft, text: theme.colors.accent };
-  }
-  if (job.status === 'failed') {
-    return { label: 'Issue', fill: theme.colors.errorBg, text: theme.colors.danger };
-  }
-  return { label: 'Draft', fill: theme.colors.panel, text: theme.colors.muted };
-}
+import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
+import { getJobStatusMeta, getResultsScreenTitle, trimMultilineText } from '../utils/jobPresentation';
 
-function trimConsole(text) {
-  if (!text) {
-    return '';
-  }
-
-  return text
-    .split('\n')
-    .filter(Boolean)
-    .slice(0, 8)
-    .join('\n');
-}
-
-function Loader({ theme, styles }) {
+function Loader({ styles }) {
   const spin = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -123,25 +101,11 @@ export default function ResultsScreen({
   theme,
   isLandscape,
 }) {
-  const fade = useRef(new Animated.Value(0)).current;
-  const rise = useRef(new Animated.Value(18)).current;
+  const animatedStyle = useEntranceAnimation({
+    dependencies: [job?.id, job?.status],
+    duration: 280,
+  });
   const styles = createStyles(theme, isLandscape);
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 280,
-        useNativeDriver: true,
-      }),
-      Animated.spring(rise, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 15,
-        stiffness: 145,
-      }),
-    ]).start();
-  }, [fade, rise, job?.id, job?.status]);
 
   if (!job) {
     return (
@@ -151,14 +115,17 @@ export default function ResultsScreen({
     );
   }
 
-  const status = statusMeta(job, theme);
-  const topTitle = job.status === 'completed' ? 'Output' : job.status === 'failed' ? 'Issue' : 'Processing';
+  const status = getJobStatusMeta(job.status, theme, {
+    processing: 'AI scan active',
+    queued: 'AI scan active',
+  });
+  const topTitle = getResultsScreenTitle(job.status);
   const primaryError = error || job.metadata?.error;
-  const stderrPreview = trimConsole(job.metadata?.stderr);
+  const stderrPreview = trimMultilineText(job.metadata?.stderr);
 
   if (job.status === 'processing' || job.status === 'queued') {
     return (
-      <Animated.View style={{ flex: 1, opacity: fade, transform: [{ translateY: rise }] }}>
+      <Animated.View style={[styles.screen, animatedStyle]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.headerRow}>
             <BackButton onBack={onBack} theme={theme} styles={styles} />
@@ -167,7 +134,7 @@ export default function ResultsScreen({
           </View>
 
           <View style={styles.processingCard}>
-            <Loader theme={theme} styles={styles} />
+            <Loader styles={styles} />
             <Text style={styles.processingTitle}>Processing your floor plan...</Text>
             <Text style={styles.processingSubtitle}>Detecting walls, doors, and layout</Text>
             <View style={styles.progressPill}>
@@ -184,7 +151,7 @@ export default function ResultsScreen({
 
   if (job.status === 'completed') {
     return (
-      <Animated.View style={{ flex: 1, opacity: fade, transform: [{ translateY: rise }] }}>
+      <Animated.View style={[styles.screen, animatedStyle]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.headerRow}>
             <BackButton onBack={onBack} theme={theme} styles={styles} />
@@ -227,7 +194,7 @@ export default function ResultsScreen({
   }
 
   return (
-    <Animated.View style={{ flex: 1, opacity: fade, transform: [{ translateY: rise }] }}>
+    <Animated.View style={[styles.screen, animatedStyle]}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <BackButton onBack={onBack} theme={theme} styles={styles} />
@@ -269,6 +236,9 @@ export default function ResultsScreen({
 
 function createStyles(theme, isLandscape) {
   return StyleSheet.create({
+    screen: {
+      flex: 1,
+    },
     content: {
       paddingBottom: 30,
     },

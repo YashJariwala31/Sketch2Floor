@@ -2,37 +2,7 @@ import React from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-function getStatusMeta(status, theme) {
-  if (status === 'completed') {
-    return { label: 'Ready', fill: theme.colors.successSoft, text: theme.colors.success };
-  }
-  if (status === 'failed') {
-    return { label: 'Issue', fill: theme.colors.errorBg, text: theme.colors.danger };
-  }
-  if (status === 'processing') {
-    return { label: 'Live', fill: theme.colors.accentSoft, text: theme.colors.accent };
-  }
-  if (status === 'queued') {
-    return { label: 'Queued', fill: theme.colors.panel, text: theme.colors.muted };
-  }
-  return { label: 'Draft', fill: theme.colors.panel, text: theme.colors.muted };
-}
-
-function formatDate(value) {
-  if (!value) {
-    return 'Recently';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return 'Recently';
-  }
-
-  return date.toLocaleDateString('en-IN', {
-    month: 'short',
-    year: 'numeric',
-  });
-}
+import { formatJobDate, getJobStatusMeta } from '../utils/jobPresentation';
 
 function Placeholder({ styles, theme }) {
   return (
@@ -50,7 +20,7 @@ function Placeholder({ styles, theme }) {
 export default function JobCard({ job, onPress, onDelete, theme }) {
   const styles = createStyles(theme);
   const previewUri = job.combined_overlay_url || job.original_image_url;
-  const status = getStatusMeta(job.status, theme);
+  const status = getJobStatusMeta(job.status, theme);
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
@@ -73,7 +43,7 @@ export default function JobCard({ job, onPress, onDelete, theme }) {
         </View>
 
         <Text style={styles.subtitle}>Digital floor plan</Text>
-        <Text style={styles.date}>{formatDate(job.created_at)}</Text>
+        <Text style={styles.date}>{formatJobDate(job.created_at)}</Text>
       </View>
 
       {onDelete ? (

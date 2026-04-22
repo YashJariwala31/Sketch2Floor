@@ -1,19 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  BackHandler,
-  Platform,
-  Pressable,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Alert, BackHandler, Platform, StatusBar, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+import BottomTabBar from './src/components/navigation/BottomTabBar';
+import { AUTH_ROUTES, HOME_VIEWS, TABS } from './src/constants/navigation';
+import { useFloorplanJobs } from './src/hooks/useFloorplanJobs';
 import AuthScreen from './src/screens/AuthScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -21,43 +13,16 @@ import LandingScreen from './src/screens/LandingScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ResultsScreen from './src/screens/ResultsScreen';
 import UploadCaptureScreen from './src/screens/UploadCaptureScreen';
-import { createJobWithImage, deleteJob, fetchJobs, startJob, testBackendConnection } from './src/api/client';
 import { getTheme } from './src/theme';
-import { saveImageToDevice } from './src/utils/saveImageToDevice';
+import { captureImageFromCamera, pickImageFromGallery } from './src/utils/imageSelection';
 
-const TABS = {
-  HOME: 'home',
-  HISTORY: 'history',
-  PROFILE: 'profile',
-};
+const MAIN_TABS = [TABS.HOME, TABS.HISTORY, TABS.PROFILE];
 
-const HOME_VIEWS = {
-  MAIN: 'main',
-  UPLOAD: 'upload',
-};
-
-const AUTH_ROUTES = {
-  LANDING: 'landing',
-  LOGIN: 'login',
-  SIGNUP: 'signup',
-};
-
-const TAB_META = {
-  [TABS.HOME]: { label: 'Home', icon: 'home-outline', activeIcon: 'home' },
-  [TABS.HISTORY]: { label: 'History', icon: 'time-outline', activeIcon: 'time' },
-  [TABS.PROFILE]: { label: 'Profile', icon: 'person-outline', activeIcon: 'person' },
-};
-
-function TabButton({ active, tab, onPress, theme }) {
-  const styles = createStyles(theme, false);
-  const meta = TAB_META[tab];
-
-  return (
-    <Pressable style={[styles.tabButton, active ? styles.tabButtonActive : null]} onPress={onPress}>
-      <Ionicons name={active ? meta.activeIcon : meta.icon} size={19} color={active ? theme.colors.accent : theme.colors.softText} />
-      <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>{meta.label}</Text>
-    </Pressable>
-  );
+function createSession(authValues) {
+  return {
+    email: authValues.email,
+    name: authValues.fullName || authValues.email.split('@')[0],
+  };
 }
 
 export default function App() {
@@ -66,78 +31,39 @@ export default function App() {
   const isLandscape = width > height;
   const styles = useMemo(() => createStyles(theme, isLandscape), [theme, isLandscape]);
 
-  const [jobs, setJobs] = useState([]);
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState(TABS.HOME);
   const [homeView, setHomeView] = useState(HOME_VIEWS.MAIN);
-  const [connection, setConnection] = useState(null);
   const [session, setSession] = useState(null);
   const [authRoute, setAuthRoute] = useState(AUTH_ROUTES.LANDING);
 
-  async function refreshConnection(showSuccess = false) {
-    const result = await testBackendConnection();
-    setConnection(result);
-
-    if (!result.ok) {
-      setError(result.error || 'Unable to reach backend');
-    } else if (showSuccess) {
-      Alert.alert('Connection looks good', 'The backend is reachable.');
-    }
-
-    return result;
-  }
-
-  async function loadJobs() {
-    try {
-      setLoading(true);
-      const [data, connectionResult] = await Promise.all([fetchJobs(), refreshConnection(false)]);
-      setJobs(data);
-
-      if (selectedJob) {
-        const refreshed = data.find((item) => item.id === selectedJob.id);
-        if (refreshed) {
-          setSelectedJob(refreshed);
-        }
-      }
-
-      if (connectionResult.ok) {
-        setError('');
-      }
-    } catch (err) {
-      setError(err.message || 'Unable to reach backend');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const {
+    jobs,
+    selectedJob,
+    setSelectedJob,
+    clearSelectedJob,
+    loading,
+    busy,
+    error,
+    connection,
+    refreshConnection,
+    loadJobs,
+    uploadAsset,
+    startExistingJob,
+    deleteExistingJob,
+    saveResult,
+  } = useFloorplanJobs({
+    enabled: Boolean(session),
+  });
 
   useEffect(() => {
     if (session) {
-      loadJobs();
       return;
     }
 
-    setJobs([]);
-    setSelectedJob(null);
-    setLoading(false);
-    setError('');
     setActiveTab(TABS.HOME);
     setHomeView(HOME_VIEWS.MAIN);
+    setAuthRoute(AUTH_ROUTES.LANDING);
   }, [session]);
-
-  useEffect(() => {
-    if (!session || !selectedJob || (selectedJob.status !== 'queued' && selectedJob.status !== 'processing')) {
-      return undefined;
-    }
-
-    const intervalId = setInterval(() => {
-      loadJobs();
-    }, 4000);
-
-    return () => clearInterval(intervalId);
-  }, [session, selectedJob]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -154,7 +80,7 @@ export default function App() {
       }
 
       if (selectedJob) {
-        setSelectedJob(null);
+        clearSelectedJob();
         return true;
       }
 
@@ -172,222 +98,121 @@ export default function App() {
     });
 
     return () => subscription.remove();
-  }, [activeTab, authRoute, homeView, selectedJob, session]);
+  }, [activeTab, authRoute, clearSelectedJob, homeView, selectedJob, session]);
 
-  async function uploadCapturedSketch({
-    imageUri,
-    imageName,
-    mimeType,
-    name,
-    description,
-    failureMessage,
-  }) {
-    try {
-      setBusy(true);
-      setError('');
-
-      const created = await createJobWithImage({
-        name,
-        description,
-        imageUri,
-        imageName,
-        mimeType,
-      });
-
-      let nextJob = created;
-      try {
-        nextJob = await startJob(created.id);
-      } catch (startError) {
-        setError(startError.message || 'Uploaded, but could not start processing');
-      }
-
-      setSelectedJob(nextJob);
-      setActiveTab(TABS.HISTORY);
-      setHomeView(HOME_VIEWS.MAIN);
-      await loadJobs();
-    } catch (err) {
-      setError(err.message || failureMessage);
-      Alert.alert('Upload failed', err.message || failureMessage);
-    } finally {
-      setBusy(false);
+  async function handleConnectionRefresh(showSuccess = false) {
+    const result = await refreshConnection();
+    if (showSuccess && result.ok) {
+      Alert.alert('Connection looks good', 'The backend is reachable.');
     }
+    return result;
   }
 
-  async function handleUploadImage() {
+  async function handleCaptureImage() {
     try {
-      setBusy(true);
-      setError('');
-
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow camera access.');
+      const asset = await captureImageFromCamera();
+      if (!asset) {
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        quality: 1,
-        cameraType: ImagePicker.CameraType.back,
-      });
-
-      if (result.canceled || !result.assets?.length) {
-        return;
-      }
-
-      const asset = result.assets[0];
-      await uploadCapturedSketch({
-        imageUri: asset.uri,
-        imageName: asset.fileName || `floorplan-${Date.now()}.jpg`,
-        mimeType: asset.mimeType || 'image/jpeg',
+      await uploadAsset({
+        asset,
         name: 'New floorplan scan',
         description: 'Captured from camera',
+        fallbackName: `floorplan-${Date.now()}.jpg`,
         failureMessage: 'Unable to upload image',
       });
+
+      setActiveTab(TABS.HISTORY);
+      setHomeView(HOME_VIEWS.MAIN);
     } catch (err) {
-      setError(err.message || 'Unable to open camera');
       Alert.alert('Camera failed', err.message || 'Unable to open camera.');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function handlePickFromGallery() {
     try {
-      setBusy(true);
-      setError('');
-
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow photo access.');
+      const asset = await pickImageFromGallery();
+      if (!asset) {
         return;
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 1,
-      });
-
-      if (result.canceled || !result.assets?.length) {
-        return;
-      }
-
-      const asset = result.assets[0];
-      await uploadCapturedSketch({
-        imageUri: asset.uri,
-        imageName: asset.fileName || 'floorplan.jpg',
-        mimeType: asset.mimeType || 'image/jpeg',
+      await uploadAsset({
+        asset,
         name: 'Imported floorplan',
         description: 'Imported from phone',
+        fallbackName: 'floorplan.jpg',
         failureMessage: 'Unable to import image',
       });
+
+      setActiveTab(TABS.HISTORY);
+      setHomeView(HOME_VIEWS.MAIN);
     } catch (err) {
-      setError(err.message || 'Unable to import image');
       Alert.alert('Upload failed', err.message || 'Unable to import image.');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function handleStartJob(job) {
-    if (!job) {
-      return;
-    }
     try {
-      setBusy(true);
-      setError('');
-      const started = await startJob(job.id);
-      setSelectedJob(started);
-      await loadJobs();
+      await startExistingJob(job);
     } catch (err) {
-      setError(err.message || 'Unable to start job');
       Alert.alert('Could not start', err.message || 'Unable to start job.');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function handleDeleteJob(job) {
-    if (!job) {
-      return;
-    }
-
     try {
-      setBusy(true);
-      setError('');
-      await deleteJob(job.id);
-
-      if (selectedJob?.id === job.id) {
-        setSelectedJob(null);
-      }
-
-      await loadJobs();
+      await deleteExistingJob(job);
     } catch (err) {
-      setError(err.message || 'Unable to delete job');
       Alert.alert('Delete failed', err.message || 'Unable to delete job.');
-    } finally {
-      setBusy(false);
     }
   }
 
   async function handleSaveResult(url) {
     try {
-      setBusy(true);
-      setError('');
-      await saveImageToDevice(url, 'Sketch2FloorPlan');
+      await saveResult(url);
       Alert.alert('Saved', 'The floor plan was sent to your device storage.');
     } catch (err) {
-      setError(err.message || 'Unable to prepare download');
       Alert.alert('Download failed', err.message || 'Unable to prepare download.');
-    } finally {
-      setBusy(false);
     }
   }
 
   function handleAuthSubmit(authValues) {
-    setSession({
-      email: authValues.email,
-      name: authValues.fullName || authValues.email.split('@')[0],
-    });
+    setSession(createSession(authValues));
     setActiveTab(TABS.HOME);
     setHomeView(HOME_VIEWS.MAIN);
-    setSelectedJob(null);
-    setError('');
+    clearSelectedJob();
     setAuthRoute(AUTH_ROUTES.LANDING);
   }
 
   function handleSignOut() {
     setSession(null);
-    setConnection(null);
-    setActiveTab(TABS.HOME);
-    setHomeView(HOME_VIEWS.MAIN);
   }
 
-  function renderCurrentScreen() {
-    if (!session) {
-      if (authRoute === AUTH_ROUTES.LANDING) {
-        return <LandingScreen theme={theme} isLandscape={isLandscape} onLogin={() => setAuthRoute(AUTH_ROUTES.LOGIN)} onSignUp={() => setAuthRoute(AUTH_ROUTES.SIGNUP)} />;
-      }
-
-      return (
-        <AuthScreen
-          busy={busy}
-          theme={theme}
-          mode={authRoute === AUTH_ROUTES.SIGNUP ? 'signup' : 'login'}
-          onBack={() => setAuthRoute(AUTH_ROUTES.LANDING)}
-          onSwitchMode={() => setAuthRoute(authRoute === AUTH_ROUTES.SIGNUP ? AUTH_ROUTES.LOGIN : AUTH_ROUTES.SIGNUP)}
-          onSubmit={handleAuthSubmit}
-        />
-      );
+  function handleTabChange(tab) {
+    setActiveTab(tab);
+    if (tab === TABS.HOME) {
+      setHomeView(HOME_VIEWS.MAIN);
     }
+  }
 
+  async function handleRefreshJobs() {
+    try {
+      await loadJobs();
+    } catch (err) {
+      Alert.alert('Refresh failed', err.message || 'Unable to refresh jobs.');
+    }
+  }
+
+  function renderAuthenticatedScreen() {
     if (selectedJob) {
       return (
         <ResultsScreen
           job={selectedJob}
           busy={busy}
           error={error}
-          onBack={() => setSelectedJob(null)}
-          onRefresh={loadJobs}
+          onBack={clearSelectedJob}
+          onRefresh={handleRefreshJobs}
           onStartJob={() => handleStartJob(selectedJob)}
           onDeleteJob={handleDeleteJob}
           onSaveResult={handleSaveResult}
@@ -416,7 +241,7 @@ export default function App() {
         <ProfileScreen
           connection={connection}
           session={session}
-          onRefreshConnection={() => refreshConnection(true)}
+          onRefreshConnection={() => handleConnectionRefresh(true)}
           onSignOut={handleSignOut}
           theme={theme}
           isLandscape={isLandscape}
@@ -429,7 +254,7 @@ export default function App() {
         <UploadCaptureScreen
           busy={busy}
           onPickFromGallery={handlePickFromGallery}
-          onOpenCamera={handleUploadImage}
+          onOpenCamera={handleCaptureImage}
           onBack={() => setHomeView(HOME_VIEWS.MAIN)}
           theme={theme}
           isLandscape={isLandscape}
@@ -441,11 +266,39 @@ export default function App() {
       <HomeScreen
         busy={busy}
         onOpenUploadScreen={() => setHomeView(HOME_VIEWS.UPLOAD)}
-        onCaptureImage={handleUploadImage}
+        onCaptureImage={handleCaptureImage}
         theme={theme}
         isLandscape={isLandscape}
       />
     );
+  }
+
+  function renderCurrentScreen() {
+    if (!session) {
+      if (authRoute === AUTH_ROUTES.LANDING) {
+        return (
+          <LandingScreen
+            theme={theme}
+            isLandscape={isLandscape}
+            onLogin={() => setAuthRoute(AUTH_ROUTES.LOGIN)}
+            onSignUp={() => setAuthRoute(AUTH_ROUTES.SIGNUP)}
+          />
+        );
+      }
+
+      return (
+        <AuthScreen
+          busy={busy}
+          theme={theme}
+          mode={authRoute === AUTH_ROUTES.SIGNUP ? 'signup' : 'login'}
+          onBack={() => setAuthRoute(AUTH_ROUTES.LANDING)}
+          onSwitchMode={() => setAuthRoute(authRoute === AUTH_ROUTES.SIGNUP ? AUTH_ROUTES.LOGIN : AUTH_ROUTES.SIGNUP)}
+          onSubmit={handleAuthSubmit}
+        />
+      );
+    }
+
+    return renderAuthenticatedScreen();
   }
 
   return (
@@ -457,21 +310,7 @@ export default function App() {
         <View style={styles.container}>
           <View style={styles.screenArea}>{renderCurrentScreen()}</View>
 
-          {session && !selectedJob ? (
-            <View style={styles.bottomNav}>
-              <TabButton
-                active={activeTab === TABS.HOME}
-                tab={TABS.HOME}
-                onPress={() => {
-                  setActiveTab(TABS.HOME);
-                  setHomeView(HOME_VIEWS.MAIN);
-                }}
-                theme={theme}
-              />
-              <TabButton active={activeTab === TABS.HISTORY} tab={TABS.HISTORY} onPress={() => setActiveTab(TABS.HISTORY)} theme={theme} />
-              <TabButton active={activeTab === TABS.PROFILE} tab={TABS.PROFILE} onPress={() => setActiveTab(TABS.PROFILE)} theme={theme} />
-            </View>
-          ) : null}
+          {session && !selectedJob ? <BottomTabBar activeTab={activeTab} onSelectTab={handleTabChange} tabs={MAIN_TABS} theme={theme} /> : null}
         </View>
       </SafeAreaView>
     </SafeAreaProvider>
@@ -493,37 +332,6 @@ function createStyles(theme, isLandscape) {
     },
     screenArea: {
       flex: 1,
-    },
-    bottomNav: {
-      marginTop: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: theme.colors.surfaceElevated,
-      borderRadius: 22,
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-      paddingHorizontal: 7,
-      paddingVertical: 7,
-      ...theme.shadow.card,
-    },
-    tabButton: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      paddingVertical: 11,
-      borderRadius: 18,
-    },
-    tabButtonActive: {
-      backgroundColor: theme.colors.heroTint,
-    },
-    tabLabel: {
-      color: theme.colors.softText,
-      fontWeight: '800',
-      fontSize: 12,
-    },
-    tabLabelActive: {
-      color: theme.colors.accent,
     },
   });
 }

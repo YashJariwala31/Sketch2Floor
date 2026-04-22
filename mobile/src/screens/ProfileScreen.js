@@ -40,7 +40,6 @@ export default function ProfileScreen({ connection, session, onRefreshConnection
 
         <DetailRow label="Name" value={session?.name || 'Guest'} styles={styles} />
         <DetailRow label="Email" value={session?.email || 'Unavailable'} styles={styles} />
-        <DetailRow label="Backend" value={connection?.apiBaseUrl || 'Unavailable'} styles={styles} />
         <DetailRow label="Theme" value="Light studio" styles={styles} />
         <DetailRow label="Downloads" value="Phone storage" styles={styles} />
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -12,6 +12,8 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 
 function Field({ label, value, onChangeText, secureTextEntry, autoCapitalize = 'none', keyboardType = 'default', styles, theme, placeholder }) {
   return (
@@ -36,26 +38,14 @@ export default function AuthScreen({ busy, theme, mode, onSubmit, onBack, onSwit
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const fade = useRef(new Animated.Value(0)).current;
-  const rise = useRef(new Animated.Value(18)).current;
+  const animatedStyle = useEntranceAnimation({
+    dependencies: [mode],
+    duration: 320,
+    damping: 15,
+    stiffness: 140,
+  });
   const styles = createStyles(theme);
   const isSignUp = mode === 'signup';
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 320,
-        useNativeDriver: true,
-      }),
-      Animated.spring(rise, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 15,
-        stiffness: 140,
-      }),
-    ]).start();
-  }, [fade, rise, mode]);
 
   useEffect(() => {
     setFullName('');
@@ -96,7 +86,7 @@ export default function AuthScreen({ busy, theme, mode, onSubmit, onBack, onSwit
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Animated.View style={[styles.wrapper, { opacity: fade, transform: [{ translateY: rise }] }]}>
+        <Animated.View style={[styles.wrapper, animatedStyle]}>
           <View style={styles.topBar}>
             <Pressable style={styles.backButton} onPress={onBack}>
               <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
