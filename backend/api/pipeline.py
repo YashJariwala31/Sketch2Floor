@@ -21,13 +21,11 @@ REQUIRED_PIPELINE_MODULES = [
     ('segmentation_models_pytorch', 'segmentation-models-pytorch'),
 ]
 
+PIPELINE_LOCK = threading.Lock()
+
 
 def _run_command(args, *, env=None):
-    merged_env = os.environ.copy()
-    if env:
-        merged_env.update(env)
-    merged_env.setdefault('PYTHONIOENCODING', 'utf-8')
-    merged_env.setdefault('PYTHONUTF8', '1')
+    merged_env = _pipeline_env(env)
 
     completed = subprocess.run(
         args,
@@ -44,12 +42,32 @@ def _run_command(args, *, env=None):
     }
 
 
+def _pipeline_env(extra=None):
+    merged_env = os.environ.copy()
+    if extra:
+        merged_env.update(extra)
+    merged_env.setdefault('PYTHONIOENCODING', 'utf-8')
+    merged_env.setdefault('PYTHONUTF8', '1')
+    merged_env.setdefault('PYTHONHASHSEED', '0')
+    merged_env.setdefault('OMP_NUM_THREADS', '1')
+    merged_env.setdefault('OPENBLAS_NUM_THREADS', '1')
+    merged_env.setdefault('MKL_NUM_THREADS', '1')
+    merged_env.setdefault('VECLIB_MAXIMUM_THREADS', '1')
+    merged_env.setdefault('NUMEXPR_NUM_THREADS', '1')
+    return merged_env
+
+
 def _copy_if_exists(src: Path, dst: Path):
     if not src.exists():
         return False
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dst)
     return True
+
+
+def _unlink_if_exists(path: Path):
+    if path.exists() and path.is_file():
+        path.unlink()
 
 
 def _check_pipeline_dependencies():
@@ -150,79 +168,120 @@ def process_floorplan_job(job_id: int):
         job.save(update_fields=['status', 'metadata', 'updated_at'])
 
         command_log = []
-        command_log.append(_run_command([python, '-m', 'wall_pipeline.main', str(image_path)]))
+        pipeline_outputs = _pipeline_outputs(source_stem)
+        wall_stage_dir = REPO_ROOT / 'wall_pipeline' / 'data' / 'intermediate'
+        placed_doors_path = REPO_ROOT / 'placed_doors.json'
 
-        wall_src = REPO_ROOT / 'wall_pipeline' / 'data' / 'intermediate' / 'wall_polygons.json'
-        room_src = REPO_ROOT / 'wall_pipeline' / 'data' / 'intermediate' / 'room_polygons.json'
-        if wall_src.exists():
-            shutil.copyfile(wall_src, REPO_ROOT / 'intermediate' / 'wall_polygons.json')
-        if room_src.exists():
-            shutil.copyfile(room_src, REPO_ROOT / 'intermediate' / 'room_polygons.json')
+        with PIPELINE_LOCK:
+            for transient_path in [
+                pipeline_outputs['door_mask_path'],
+                pipeline_outputs['window_mask_path'],
+                pipeline_outputs['geometry_path'],
+                pipeline_outputs['overlay_path'],
+                pipeline_outputs['combined_overlay_path'],
+                pipeline_outputs['wall_polygons_path'],
+                pipeline_outputs['room_polygons_path'],
+                pipeline_outputs['fused_floorplan_path'],
+                placed_doors_path,
+                wall_stage_dir / 'wall_polygons.json',
+                wall_stage_dir / 'room_polygons.json',
+            ]:
+                _unlink_if_exists(transient_path)
 
-        command_log.append(_run_command([python, '-m', 'opening_pipeline.test_final', '--image', str(image_path)]))
-        geometry_output = REPO_ROOT / 'predictions' / f'{source_stem}_geometry.json'
-        command_log.append(
-            _run_command(
-                [
-                    python,
-                    '-m',
-                    'opening_pipeline.mask_to_geometry',
-                    '--image',
-                    str(image_path),
-                    '--door_mask',
-                    str(REPO_ROOT / 'predictions' / f'{source_stem}_door.png'),
-                    '--window_mask',
-                    str(REPO_ROOT / 'predictions' / f'{source_stem}_window.png'),
-                    '--out_json',
-                    str(geometry_output),
-                    '--out_annotated',
-                    str(REPO_ROOT / 'predictions' / f'{source_stem}_annotated.png'),
-                ]
-            )
-        )
+            command_log.append(_run_command([python, '-m', 'wall_pipeline.main', str(image_path)]))
 
-        if not geometry_output.exists() or geometry_output.stat().st_size == 0:
-            raise RuntimeError(
-                f'Geometry output was not generated for {source_stem}. '
-                'The mask-to-geometry step completed without writing the expected JSON file.'
+            wall_src = wall_stage_dir / 'wall_polygons.json'
+            room_src = wall_stage_dir / 'room_polygons.json'
+            if wall_src.exists():
+                shutil.copyfile(wall_src, pipeline_outputs['wall_polygons_path'])
+            if room_src.exists():
+                shutil.copyfile(room_src, pipeline_outputs['room_polygons_path'])
+
+            command_log.append(_run_command([python, '-m', 'opening_pipeline.test_final', '--image', str(image_path)]))
+            geometry_output = pipeline_outputs['geometry_path']
+            command_log.append(
+                _run_command(
+                    [
+                        python,
+                        '-m',
+                        'opening_pipeline.mask_to_geometry',
+                        '--image',
+                        str(image_path),
+                        '--door_mask',
+                        str(pipeline_outputs['door_mask_path']),
+                        '--window_mask',
+                        str(pipeline_outputs['window_mask_path']),
+                        '--out_json',
+                        str(geometry_output),
+                        '--out_annotated',
+                        str(REPO_ROOT / 'predictions' / f'{source_stem}_annotated.png'),
+                    ]
+                )
             )
 
-        env = os.environ.copy()
-        env['IMAGE_ID'] = source_stem
-        command_log.append(_run_command([python, '-m', 'opening_pipeline.run_transform'], env=env))
-        command_log.append(_run_command([python, '-m', 'opening_pipeline.overlay', str(image_path)]))
-        command_log.append(
-            _run_command(
-                [
-                    python,
-                    '-m',
-                    'utils.floorplan_fusion',
-                    '--walls',
-                    str(REPO_ROOT / 'intermediate' / 'wall_polygons.json'),
-                    '--doors',
-                    str(REPO_ROOT / 'placed_doors.json'),
-                    '--out',
-                    str(REPO_ROOT / 'intermediate' / 'floorplan_fused.json'),
-                ]
+            if not geometry_output.exists() or geometry_output.stat().st_size == 0:
+                raise RuntimeError(
+                    f'Geometry output was not generated for {source_stem}. '
+                    'The mask-to-geometry step completed without writing the expected JSON file.'
+                )
+
+            env = _pipeline_env(
+                {
+                    'IMAGE_ID': source_stem,
+                    'S2FP_GEOMETRY_PATH': str(geometry_output),
+                    'S2FP_WALLS_PATH': str(pipeline_outputs['wall_polygons_path']),
+                    'S2FP_ROOMS_PATH': str(pipeline_outputs['room_polygons_path']),
+                    'S2FP_PLACED_DOORS_PATH': str(placed_doors_path),
+                }
             )
-        )
-        command_log.append(
-            _run_command(
-                [
-                    python,
-                    '-m',
-                    'utils.combined_overlay',
-                    '--image',
-                    str(image_path),
-                    '--walls',
-                    str(REPO_ROOT / 'intermediate' / 'wall_polygons.json'),
-                    '--doors',
-                    str(REPO_ROOT / 'placed_doors.json'),
-                    '--out',
-                    str(REPO_ROOT / 'predictions' / f'combined_overlay_{source_stem}.png'),
-                ]
+            command_log.append(_run_command([python, '-m', 'opening_pipeline.run_transform'], env=env))
+            command_log.append(
+                _run_command(
+                    [
+                        python,
+                        '-m',
+                        'opening_pipeline.overlay',
+                        str(image_path),
+                        '--doors',
+                        str(placed_doors_path),
+                    ],
+                    env=env,
+                )
             )
-        )
+            command_log.append(
+                _run_command(
+                    [
+                        python,
+                        '-m',
+                        'utils.floorplan_fusion',
+                        '--walls',
+                        str(pipeline_outputs['wall_polygons_path']),
+                        '--doors',
+                        str(placed_doors_path),
+                        '--geometry',
+                        str(geometry_output),
+                        '--out',
+                        str(pipeline_outputs['fused_floorplan_path']),
+                    ]
+                )
+            )
+            command_log.append(
+                _run_command(
+                    [
+                        python,
+                        '-m',
+                        'utils.combined_overlay',
+                        '--image',
+                        str(image_path),
+                        '--walls',
+                        str(pipeline_outputs['fused_floorplan_path']),
+                        '--doors',
+                        str(placed_doors_path),
+                        '--out',
+                        str(pipeline_outputs['combined_overlay_path']),
+                    ]
+                )
+            )
 
         _sync_pipeline_outputs(job)
         job.status = FloorplanJob.Status.COMPLETED

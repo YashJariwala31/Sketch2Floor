@@ -87,6 +87,70 @@ def _segments_from_wall_polygons(wall_polygons):
     return segments
 
 
+def _coerce_int_id(value, fallback):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def _centerline_segment_from_wall_polygon(wall, segment_id):
+    vertices = wall.get("vertices")
+    if not isinstance(vertices, list) or len(vertices) < 2:
+        return None
+
+    try:
+        points = np.array(vertices, dtype=float)
+    except (TypeError, ValueError):
+        return None
+
+    if points.ndim != 2 or points.shape[1] != 2 or not np.isfinite(points).all():
+        return None
+
+    min_x = float(np.min(points[:, 0]))
+    max_x = float(np.max(points[:, 0]))
+    min_y = float(np.min(points[:, 1]))
+    max_y = float(np.max(points[:, 1]))
+    width = max_x - min_x
+    height = max_y - min_y
+
+    if max(width, height) < 1e-6:
+        return None
+
+    if width >= height:
+        center_y = (min_y + max_y) / 2.0
+        point_1 = np.array([min_x, center_y], dtype=float)
+        point_2 = np.array([max_x, center_y], dtype=float)
+        thickness = max(1.0, height)
+    else:
+        center_x = (min_x + max_x) / 2.0
+        point_1 = np.array([center_x, min_y], dtype=float)
+        point_2 = np.array([center_x, max_y], dtype=float)
+        thickness = max(1.0, width)
+
+    if float(np.linalg.norm(point_2 - point_1)) < 1e-6:
+        return None
+
+    return {
+        "id": int(segment_id),
+        "wall_id": _coerce_int_id(wall.get("wall_id", wall.get("id")), segment_id),
+        "p1": point_1,
+        "p2": point_2,
+        "thickness": thickness,
+    }
+
+
+def _centerline_segments_from_wall_polygons(wall_polygons):
+    segments = []
+    for segment_id, wall in enumerate(wall_polygons):
+        if not isinstance(wall, dict):
+            continue
+        segment = _centerline_segment_from_wall_polygon(wall, segment_id)
+        if segment is not None:
+            segments.append(segment)
+    return segments
+
+
 def _segment_intersection(point_1, point_2, point_3, point_4):
     x1, y1 = float(point_1[0]), float(point_1[1])
     x2, y2 = float(point_2[0]), float(point_2[1])
@@ -469,12 +533,15 @@ def _normalize_wall_segments(walls):
     wall_polygons = []
     wall_segments = []
 
+    if isinstance(walls, dict) and isinstance(walls.get("walls"), list):
+        walls = walls["walls"]
+
     if not isinstance(walls, list):
         return wall_polygons, wall_segments
 
     if walls and isinstance(walls[0], dict) and "vertices" in walls[0]:
         wall_polygons = walls
-        raw_segments = _segments_from_wall_polygons(walls)
+        raw_segments = _centerline_segments_from_wall_polygons(walls)
     else:
         raw_segments = []
         for index, segment in enumerate(walls):
@@ -488,6 +555,7 @@ def _normalize_wall_segments(walls):
                     "wall_id": int(segment.get("wall_id", -1)),
                     "p1": np.array([float(segment["x1"]), float(segment["y1"])], dtype=float),
                     "p2": np.array([float(segment["x2"]), float(segment["y2"])], dtype=float),
+                    "thickness": float(segment.get("thickness", 0.0) or 0.0),
                 }
             )
 
@@ -520,6 +588,7 @@ def _normalize_wall_segments(walls):
                 "axis": axis,
                 "span_start": span_start,
                 "span_end": span_end,
+                "thickness": float(segment.get("thickness", 0.0) or 0.0),
             }
         )
 
@@ -531,14 +600,21 @@ def _estimate_symbol_axis(detected):
     if isinstance(rotated_box, list) and len(rotated_box) >= 2:
         points = np.array(rotated_box, dtype=float)
         best_vector = None
-        best_length = -1.0
+        best_key = None
         for index in range(len(points)):
             point_1 = points[index]
             point_2 = points[(index + 1) % len(points)]
             vector = point_2 - point_1
             length = float(np.linalg.norm(vector))
-            if length > best_length:
-                best_length = length
+            candidate_key = (
+                -round(length, 6),
+                round(min(float(point_1[1]), float(point_2[1])), 6),
+                round(min(float(point_1[0]), float(point_2[0])), 6),
+                round(float(vector[1]), 6),
+                round(float(vector[0]), 6),
+            )
+            if best_key is None or candidate_key < best_key:
+                best_key = candidate_key
                 best_vector = vector
         if best_vector is not None:
             normalized = _normalize_vector(best_vector, name="symbol_axis")
@@ -694,7 +770,16 @@ def _infer_wall_openings(
                 )
 
     merged_candidates = []
-    for candidate in sorted(raw_candidates, key=lambda item: (item["orientation"], item["gap_start"], item["axis"])):
+    for candidate in sorted(
+        raw_candidates,
+        key=lambda item: (
+            item["orientation"],
+            round(float(item["gap_start"]), 6),
+            round(float(item["gap_end"]), 6),
+            round(float(item["axis"]), 6),
+            tuple(sorted(int(segment.get("id", -1)) for segment in item["source_segments"])),
+        ),
+    ):
         matched = None
         for merged in merged_candidates:
             if merged["orientation"] != candidate["orientation"]:
@@ -760,11 +845,29 @@ def _infer_wall_openings(
                 "end_point": end_point,
                 "normal": normal,
                 "wall_thickness": float(max(merged["axes"]) - min(merged["axes"])) if len(merged["axes"]) > 1 else 0.0,
-                "source_segments": merged["source_segments"],
+                "source_segments": sorted(
+                    merged["source_segments"],
+                    key=lambda segment: (
+                        str(segment.get("orientation", "")),
+                        round(float(segment.get("axis", 0.0)), 6),
+                        round(float(segment.get("span_start", 0.0)), 6),
+                        round(float(segment.get("span_end", 0.0)), 6),
+                        int(segment.get("id", -1)),
+                    ),
+                ),
             }
         )
 
-    return openings
+    return sorted(
+        openings,
+        key=lambda opening: (
+            opening["orientation"],
+            round(float(opening["axis"]), 6),
+            round(float(opening["gap_start"]), 6),
+            round(float(opening["gap_end"]), 6),
+            int(opening["id"]),
+        ),
+    )
 
 
 def _distance_to_interval(value, start, end):
@@ -773,6 +876,96 @@ def _distance_to_interval(value, start, end):
     if value > end:
         return float(value - end)
     return 0.0
+
+
+def _append_unique_point(points, point, *, precision=3):
+    try:
+        array = np.asarray(point, dtype=float).reshape(2)
+    except (TypeError, ValueError):
+        return
+    if not np.isfinite(array).all():
+        return
+
+    key = (round(float(array[0]), precision), round(float(array[1]), precision))
+    existing = {
+        (round(float(item[0]), precision), round(float(item[1]), precision))
+        for item in points
+    }
+    if key not in existing:
+        points.append(array)
+
+
+def _door_reference_points(detected):
+    points = []
+    center = np.array(
+        [
+            float(detected.get("center_x", 0.0)),
+            float(detected.get("center_y", 0.0)),
+        ],
+        dtype=float,
+    )
+    _append_unique_point(points, center)
+
+    x = detected.get("x")
+    y = detected.get("y")
+    width = detected.get("width")
+    height = detected.get("height")
+    if None not in (x, y, width, height):
+        x = float(x)
+        y = float(y)
+        width = float(width)
+        height = float(height)
+        bbox_points = [
+            (x, y),
+            (x + width, y),
+            (x + width, y + height),
+            (x, y + height),
+            (x + width / 2.0, y),
+            (x + width, y + height / 2.0),
+            (x + width / 2.0, y + height),
+            (x, y + height / 2.0),
+        ]
+        for point in bbox_points:
+            _append_unique_point(points, point)
+
+    rotated_box = detected.get("rotated_box")
+    if isinstance(rotated_box, list) and len(rotated_box) >= 2:
+        try:
+            box_points = np.array(rotated_box, dtype=float)
+        except (TypeError, ValueError):
+            box_points = np.empty((0, 2), dtype=float)
+        if box_points.ndim == 2 and box_points.shape[1] == 2:
+            for point in box_points:
+                _append_unique_point(points, point)
+            for index in range(len(box_points)):
+                point_1 = box_points[index]
+                point_2 = box_points[(index + 1) % len(box_points)]
+                _append_unique_point(points, (point_1 + point_2) / 2.0)
+
+    return points or [center]
+
+
+def _opening_distance_for_points(opening, points):
+    best_axis_distance = float("inf")
+    best_span_distance = float("inf")
+    best_point = None
+
+    for point in points:
+        if opening["orientation"] == "vertical":
+            axis_distance = abs(float(point[0]) - opening["axis"])
+            span_distance = _distance_to_interval(float(point[1]), opening["gap_start"], opening["gap_end"])
+        else:
+            axis_distance = abs(float(point[1]) - opening["axis"])
+            span_distance = _distance_to_interval(float(point[0]), opening["gap_start"], opening["gap_end"])
+
+        score = axis_distance * 2.5 + span_distance * 4.0
+        best_score = best_axis_distance * 2.5 + best_span_distance * 4.0
+        if score < best_score:
+            best_axis_distance = axis_distance
+            best_span_distance = span_distance
+            best_point = point
+
+    return best_axis_distance, best_span_distance, best_point
 
 
 def _select_opening_for_door(detected, openings):
@@ -785,28 +978,50 @@ def _select_opening_for_door(detected, openings):
     height = float(detected.get("height", 0.0))
     symbol_axis = _estimate_symbol_axis(detected)
     symbol_extent = max(24.0, min(width, height))
+    symbol_span = max(24.0, width, height)
+    reference_points = _door_reference_points(detected)
+    detected_center = np.array([center_x, center_y], dtype=float)
+
+    axis_limit = max(90.0, symbol_extent * 0.95)
+    span_limit = max(140.0, symbol_span * 1.15)
+    center_limit = max(360.0, symbol_span * 2.5)
 
     best_opening = None
-    best_score = float("inf")
+    best_score = None
 
     for opening in openings:
+        axis_distance, span_distance, _ = _opening_distance_for_points(opening, reference_points)
+        opening_center = (opening["start_point"] + opening["end_point"]) / 2.0
+        center_distance = float(np.linalg.norm(detected_center - opening_center))
+
+        if axis_distance > axis_limit or span_distance > span_limit or center_distance > center_limit:
+            continue
+
         if opening["orientation"] == "vertical":
-            axis_distance = abs(center_x - opening["axis"])
-            span_distance = _distance_to_interval(center_y, opening["gap_start"], opening["gap_end"])
             expected_axis = np.array([1.0, 0.0], dtype=float)
         else:
-            axis_distance = abs(center_y - opening["axis"])
-            span_distance = _distance_to_interval(center_x, opening["gap_start"], opening["gap_end"])
             expected_axis = np.array([0.0, 1.0], dtype=float)
 
         axis_alignment = abs(float(np.dot(symbol_axis, expected_axis)))
         orientation_penalty = (1.0 - axis_alignment) * 120.0
         width_penalty = abs(opening["width"] - symbol_extent) * 0.15
-        score = axis_distance * 2.5 + span_distance * 4.0 + orientation_penalty + width_penalty
+        center_penalty = center_distance * 0.05
+        score = axis_distance * 2.5 + span_distance * 4.0 + center_penalty + orientation_penalty + width_penalty
+        candidate_key = (
+            round(float(score), 6),
+            round(float(center_distance), 6),
+            round(float(opening["axis"]), 6),
+            round(float(opening["gap_start"]), 6),
+            round(float(opening["gap_end"]), 6),
+            int(opening["id"]),
+        )
 
-        if score < best_score:
-            best_score = score
-            best_opening = opening
+        if best_score is None or candidate_key < best_score:
+            best_score = candidate_key
+            best_opening = dict(opening)
+            best_opening["match_score"] = float(score)
+            best_opening["match_axis_distance"] = float(axis_distance)
+            best_opening["match_span_distance"] = float(span_distance)
 
     return best_opening
 
@@ -880,6 +1095,7 @@ def _build_door_geometry(template, template_height, hinge, strike, open_directio
         "hinge": hinge.tolist(),
         "leaf": leaf_world.tolist(),
         "arc": arc_world.tolist(),
+        "strike": strike.tolist(),
         "rotation_deg": float(math.degrees(math.atan2(open_direction[1], open_direction[0]))),
         "wall_orientation": str(wall_orientation),
         "anchor_mode": str(anchor_mode),
@@ -1025,10 +1241,16 @@ def _select_best_wall_segment(detected, wall_segments):
         dtype=float,
     )
     symbol_axis = _estimate_symbol_axis(detected)
+    reference_points = _door_reference_points(detected)
+    width = float(detected.get("width", 0.0))
+    height = float(detected.get("height", 0.0))
+    symbol_span = max(24.0, width, height)
+    max_match_distance = max(95.0, symbol_span * 0.9)
 
     best_segment = None
     best_projection = None
-    best_score = float("inf")
+    best_score = None
+    best_match_distance = float("inf")
 
     for segment in wall_segments:
         if segment["length"] < 30.0:
@@ -1039,15 +1261,38 @@ def _select_best_wall_segment(detected, wall_segments):
             continue
         normal = np.array([-tangent[1], tangent[0]], dtype=float)
         alignment = abs(float(np.dot(symbol_axis, normal)))
-        projection, distance = _project_to_segment(center, segment)
-        score = distance * 2.0 + (1.0 - alignment) * 120.0 - min(segment["length"], 300.0) * 0.05
+        center_projection, center_distance = _project_to_segment(center, segment)
 
-        if score < best_score:
-            best_score = score
+        match_distance = float("inf")
+        for point in reference_points:
+            _, distance = _project_to_segment(point, segment)
+            match_distance = min(match_distance, distance)
+
+        score = (
+            match_distance * 2.5
+            + center_distance * 0.35
+            + (1.0 - alignment) * 120.0
+            - min(segment["length"], 300.0) * 0.05
+        )
+        candidate_key = (
+            round(float(score), 6),
+            round(float(match_distance), 6),
+            round(float(center_distance), 6),
+            int(segment.get("wall_id", -1)),
+            int(segment.get("id", -1)),
+        )
+
+        if best_score is None or candidate_key < best_score:
+            best_score = candidate_key
             best_segment = segment
-            best_projection = projection
+            best_projection = center_projection
+            best_match_distance = match_distance
 
-    return best_segment, best_projection, best_score
+    if best_match_distance > max_match_distance:
+        return None, None, float("inf")
+
+    numeric_score = float(best_score[0]) if best_score is not None else float("inf")
+    return best_segment, best_projection, numeric_score
 
 
 def _build_segment_based_door(
@@ -1223,7 +1468,7 @@ def place_single_door(
                 image_height=image_height,
             )
 
-    if placement is None:
+    if placement is None and not wall_segments:
         placement = _build_legacy_door(template, detected, TEMPLATE_HEIGHT)
 
     return placement

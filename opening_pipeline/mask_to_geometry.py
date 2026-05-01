@@ -8,6 +8,7 @@ mode and batch folder mode (with optional walls JSON integration utilities).
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+
+def _rounded_key(*values: float) -> Tuple[float, ...]:
+    return tuple(round(float(value), 4) for value in values)
 
 
 def _load_grayscale(path: str) -> np.ndarray:
@@ -36,13 +41,59 @@ def _morph_close(bw: np.ndarray, kernel_size: int = 5, iterations: int = 1) -> n
 
 def _find_external_contours(bw: np.ndarray) -> List[np.ndarray]:
     contours, _hier = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    return contours
+    return sorted(contours, key=_contour_sort_key)
+
+
+def _contour_sort_key(contour: np.ndarray) -> Tuple[float, float, float, float]:
+    x, y, w, h = cv2.boundingRect(contour)
+    area = float(cv2.contourArea(contour))
+    return _rounded_key(y, x, -area, max(w, h))
+
+
+def _canonicalize_box_points(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    if not points:
+        return []
+    center_x = sum(float(x) for x, _ in points) / len(points)
+    center_y = sum(float(y) for _, y in points) / len(points)
+    ordered = sorted(
+        ((float(x), float(y)) for x, y in points),
+        key=lambda pt: (
+            round(math.atan2(pt[1] - center_y, pt[0] - center_x), 8),
+            round((pt[0] - center_x) ** 2 + (pt[1] - center_y) ** 2, 8),
+        ),
+    )
+    start_index = min(range(len(ordered)), key=lambda idx: _rounded_key(ordered[idx][1], ordered[idx][0]))
+    return ordered[start_index:] + ordered[:start_index]
 
 
 def _min_area_rect_points(contour: np.ndarray) -> List[Tuple[float, float]]:
     rect = cv2.minAreaRect(contour)
     box = cv2.boxPoints(rect)
-    return [(float(x), float(y)) for x, y in box]
+    return _canonicalize_box_points([(float(x), float(y)) for x, y in box])
+
+
+def _opening_sort_key(item: Dict[str, Any]) -> Tuple[float, float, float, float]:
+    return (
+        round(float(item.get("center_y", 0.0)), 4),
+        round(float(item.get("center_x", 0.0)), 4),
+        round(float(item.get("height", 0.0)), 4),
+        round(float(item.get("width", 0.0)), 4),
+    )
+
+
+def _reindex_openings(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    ordered = []
+    for index, item in enumerate(sorted(items, key=_opening_sort_key)):
+        normalized = dict(item)
+        normalized["id"] = int(index)
+        ordered.append(normalized)
+    return ordered
+
+
+def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
 
 
 def extract_bboxes_and_centers_from_mask(
@@ -82,7 +133,6 @@ def extract_bboxes_and_centers_from_mask(
     contours = _find_external_contours(bw)
 
     out: List[Dict[str, Any]] = []
-    oid = 0
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
         if area < area_threshold:
@@ -93,7 +143,7 @@ def extract_bboxes_and_centers_from_mask(
         cy = float(y + h / 2.0)
 
         item: Dict[str, Any] = {
-            "id": int(oid),
+            "id": -1,
             "x": int(x),
             "y": int(y),
             "width": int(w),
@@ -106,9 +156,8 @@ def extract_bboxes_and_centers_from_mask(
         item["rotated_box"] = _min_area_rect_points(cnt)
 
         out.append(item)
-        oid += 1
 
-    return out
+    return _reindex_openings(out)
 
 
 def convert_masks_to_geometry(
@@ -260,7 +309,7 @@ def _refine_one_element_to_wall(
 
     best_wall: Optional[Dict[str, Any]] = None
     best_proj: Optional[Tuple[float, float]] = None
-    best_dist = float("inf")
+    best_key: Optional[Tuple[float, str]] = None
 
     for wall in walls:
         wx1 = float(wall["x1"])
@@ -268,14 +317,15 @@ def _refine_one_element_to_wall(
         wx2 = float(wall["x2"])
         wy2 = float(wall["y2"])
         projx, projy, dist = _point_to_segment_projection(cx, cy, wx1, wy1, wx2, wy2)
-        if dist < best_dist:
-            best_dist = dist
+        candidate_key = (round(float(dist), 6), str(wall.get("id", "")))
+        if best_key is None or candidate_key < best_key:
+            best_key = candidate_key
             best_wall = wall
             best_proj = (projx, projy)
 
     if best_wall is None or best_proj is None:
         return None
-    if best_dist > float(max_wall_distance_px):
+    if best_key is None or best_key[0] > float(max_wall_distance_px):
         return None
 
     wx1 = float(best_wall["x1"])
@@ -461,8 +511,7 @@ def convert_masks_to_geometry_from_folders(
                 print("[INFO] Walls provided but ignored in bounding-box detection mode")
             payload: Dict[str, Any] = geometry
 
-            with open(out_json, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            _write_json(out_json, payload)
 
             print(f"[OK] Wrote: {out_json.name}")
             print(f"[OK] Wrote: {out_annotated.name}")
@@ -630,8 +679,7 @@ def main() -> int:
 
         payload: Dict[str, Any] = geometry_output
 
-        with open(args.out_json, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+        _write_json(Path(args.out_json), payload)
 
         print(f"[OK] Wrote: {Path(args.out_json).name}")
         print(f"[OK] Wrote: {Path(args.out_annotated).name}")

@@ -15,11 +15,39 @@ def _as_int_pt(pt) -> Tuple[int, int]:
     return int(round(float(pt[0]))), int(round(float(pt[1])))
 
 
+def _wall_polygon_sort_key(poly: Dict[str, Any]) -> Tuple[float, float, str]:
+    verts = poly.get("vertices") or []
+    if not verts:
+        return (0.0, 0.0, str(poly.get("wall_id", poly.get("id", ""))))
+    ys = [float(vertex[1]) for vertex in verts]
+    xs = [float(vertex[0]) for vertex in verts]
+    return (round(min(ys), 4), round(min(xs), 4), str(poly.get("wall_id", poly.get("id", ""))))
+
+
+def _wall_segment_sort_key(wall: Dict[str, Any]) -> Tuple[float, float, float, float, str]:
+    return (
+        round(float(wall.get("y1", 0.0)), 4),
+        round(float(wall.get("x1", 0.0)), 4),
+        round(float(wall.get("y2", 0.0)), 4),
+        round(float(wall.get("x2", 0.0)), 4),
+        str(wall.get("id", "")),
+    )
+
+
+def _door_sort_key(door: Dict[str, Any]) -> Tuple[float, float, str]:
+    hinge = door.get("hinge") or [0.0, 0.0]
+    return (
+        round(float(hinge[1]), 4),
+        round(float(hinge[0]), 4),
+        str(door.get("id", "")),
+    )
+
+
 def _draw_wall_polygons(img: np.ndarray, wall_polygons: Any, *, color=(0, 0, 0), thickness: int = 6) -> None:
     if not isinstance(wall_polygons, list):
         return
 
-    for poly in wall_polygons:
+    for poly in sorted(wall_polygons, key=_wall_polygon_sort_key):
         if not isinstance(poly, dict):
             continue
         verts = poly.get("vertices")
@@ -34,20 +62,26 @@ def _draw_wall_segments(img: np.ndarray, walls: Any, *, color=(0, 0, 0), thickne
     if not (isinstance(walls, dict) and isinstance(walls.get("walls"), list)):
         return
 
-    for w in walls["walls"]:
+    for w in sorted(walls["walls"], key=_wall_segment_sort_key):
         if not isinstance(w, dict):
             continue
         if not {"x1", "y1", "x2", "y2"}.issubset(w.keys()):
             continue
         p1 = _as_int_pt((w["x1"], w["y1"]))
         p2 = _as_int_pt((w["x2"], w["y2"]))
-        cv2.line(img, p1, p2, color, int(thickness))
+        wall_thickness = w.get("thickness", thickness)
+        try:
+            wall_thickness = int(round(float(wall_thickness)))
+        except (TypeError, ValueError):
+            wall_thickness = int(thickness)
+        wall_thickness = max(6, wall_thickness)
+        cv2.line(img, p1, p2, color, wall_thickness)
 
 
 def _draw_doors(img: np.ndarray, placed_doors: Dict[str, Any], *, color=(0, 0, 0)) -> None:
     doors = placed_doors.get("doors", []) if isinstance(placed_doors, dict) else []
 
-    for door in doors:
+    for door in sorted(doors, key=_door_sort_key):
         if not isinstance(door, dict):
             continue
         hinge = door.get("hinge")

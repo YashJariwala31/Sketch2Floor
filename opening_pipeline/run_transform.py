@@ -5,8 +5,8 @@ detected door geometry JSON, and writes `placed_doors.json` containing world-spa
 hinge/leaf/arc coordinates.
 """
 
-import os
 import json
+import os
 from pathlib import Path
 
 from opening_pipeline.transform import place_single_door
@@ -30,30 +30,55 @@ GEOMETRY_PATH = config["paths"]["geometry"]
 OUTPUT_PATH = config["paths"]["output"]
 TEMPLATE_HEIGHT = config["template"]["height"]
 
-WALLS_PATH = config.get("paths", {}).get("walls")
+WALLS_PATH = os.environ.get("S2FP_WALLS_PATH", config.get("paths", {}).get("walls"))
+ROOMS_PATH = os.environ.get("S2FP_ROOMS_PATH", config.get("paths", {}).get("rooms"))
+GEOMETRY_PATH = os.environ.get("S2FP_GEOMETRY_PATH", GEOMETRY_PATH)
+OUTPUT_PATH = os.environ.get("S2FP_PLACED_DOORS_PATH", OUTPUT_PATH)
+
+
+def _resolve_path(path_value):
+    return (ROOT_DIR / path_value) if not os.path.isabs(path_value) else Path(path_value)
+
+
+def _door_sort_key(door):
+    hinge = door.get("hinge") or [0.0, 0.0]
+    attached_wall_id = str(door.get("attached_wall_id", ""))
+    return (
+        round(float(hinge[1]), 4),
+        round(float(hinge[0]), 4),
+        attached_wall_id,
+        str(door.get("id", "")),
+    )
+
+
+def _write_json(path: Path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    os.replace(temp_path, path)
 
 
 def main():
-    template_path = (ROOT_DIR / TEMPLATE_PATH) if not os.path.isabs(TEMPLATE_PATH) else Path(TEMPLATE_PATH)
+    template_path = _resolve_path(TEMPLATE_PATH)
     with open(template_path, "r") as f:
         template = json.load(f)
 
-    geometry_path = (ROOT_DIR / GEOMETRY_PATH) if not os.path.isabs(GEOMETRY_PATH) else Path(GEOMETRY_PATH)
+    geometry_path = _resolve_path(GEOMETRY_PATH)
     with open(geometry_path, "r", encoding="utf-8") as f:
         geometry = json.load(f)
 
     walls = None
     if WALLS_PATH:
-        walls_path = (ROOT_DIR / WALLS_PATH) if not os.path.isabs(WALLS_PATH) else Path(WALLS_PATH)
+        walls_path = _resolve_path(WALLS_PATH)
         if walls_path.exists():
             with open(walls_path, "r", encoding="utf-8") as f:
                 walls = json.load(f)
 
     # Load room polygons for per-room door orientation
-    rooms_path_cfg = config.get("paths", {}).get("rooms")
     room_polygons = None
-    if rooms_path_cfg:
-        rp = (ROOT_DIR / rooms_path_cfg) if not os.path.isabs(rooms_path_cfg) else Path(rooms_path_cfg)
+    if ROOMS_PATH:
+        rp = _resolve_path(ROOMS_PATH)
         if rp.exists():
             with open(rp, "r", encoding="utf-8") as f:
                 room_polygons = json.load(f)
@@ -65,19 +90,34 @@ def main():
     img_w = geometry.get('image_width')
     img_h = geometry.get('image_height')
 
+    detections = sorted(
+        geometry.get("doors", []),
+        key=lambda det: (
+            round(float(det.get("center_y", 0.0)), 4),
+            round(float(det.get("center_x", 0.0)), 4),
+            round(float(det.get("width", 0.0)), 4),
+            round(float(det.get("height", 0.0)), 4),
+            int(det.get("id", 0)),
+        ),
+    )
+
     placed = []
-    for det in geometry.get('doors', []):
-        placed.append(place_single_door(
+    for det in detections:
+        placement = place_single_door(
             template, det, TEMPLATE_HEIGHT,
             walls=walls,
             room_polygons=room_polygons,
             image_width=img_w,
             image_height=img_h,
-        ))
+        )
+        if placement is None:
+            print(f"[WARN] Skipping door {det.get('id', '?')}: no nearby wall/opening match")
+            continue
+        placed.append(placement)
 
-    output_path = (ROOT_DIR / OUTPUT_PATH) if not os.path.isabs(OUTPUT_PATH) else Path(OUTPUT_PATH)
-    with open(output_path, "w") as f:
-        json.dump({"doors": placed}, f, indent=2)
+    output_path = _resolve_path(OUTPUT_PATH)
+    placed = sorted(placed, key=_door_sort_key)
+    _write_json(output_path, {"doors": placed})
 
 
 if __name__ == "__main__":

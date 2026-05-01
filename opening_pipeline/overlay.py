@@ -4,11 +4,23 @@ Reads `placed_doors.json` (hinge/leaf/arc points) and draws the result on top of
 input image using OpenCV for quick visual verification.
 """
 
+import os
 import cv2
 import json
 import numpy as np
 from pathlib import Path
 import sys
+
+
+def _door_sort_key(door):
+    hinge = door.get("hinge") or [0.0, 0.0]
+    return (
+        round(float(hinge[1]), 4),
+        round(float(hinge[0]), 4),
+        str(door.get("attached_wall_id", "")),
+        str(door.get("id", "")),
+    )
+
 
 def draw_doors(image_path, placed_json_path):
     img = cv2.imread(image_path)
@@ -16,11 +28,11 @@ def draw_doors(image_path, placed_json_path):
     with open(placed_json_path) as f:
         data = json.load(f)
 
-    doors = data.get('doors', [])
+    doors = sorted(data.get('doors', []), key=_door_sort_key)
 
     for door in doors:
         # draw hinge
-        hx, hy = map(int, door['hinge'])
+        hx, hy = map(lambda value: int(round(float(value))), door['hinge'])
         cv2.circle(img, (hx, hy), 8, (0,0,0), -1)
 
         # draw leaf
@@ -43,7 +55,7 @@ def draw_doors(image_path, placed_json_path):
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        raise SystemExit('Usage: python overlay.py <image_id>')
+        raise SystemExit('Usage: python overlay.py <image_id> [--doors <placed_doors.json>]')
 
     base_path = Path(__file__).resolve().parent
     root_path = base_path.parent
@@ -61,9 +73,15 @@ if __name__ == '__main__':
             original_dir / f'{image_id}.jpg',
             original_dir / f'{image_id}.png',
         ]
-        image_path = next((p for p in candidates if p.exists() and p.is_file()), candidates[0])
+        image_path = next((p for p in candidates if p.exists() and p.is_file()), None)
+        if image_path is None:
+            raise SystemExit(f'Failed to resolve image for {arg}')
 
-    placed_path = root_path / 'placed_doors.json'
+    placed_path = Path(sys.argv[sys.argv.index('--doors') + 1]) if '--doors' in sys.argv else None
+    if placed_path is None:
+        placed_path = Path(
+            os.environ.get('S2FP_PLACED_DOORS_PATH', str(root_path / 'placed_doors.json'))
+        )
     out_path = root_path / 'predictions' / f'overlay_{image_id}.png'
 
     output = draw_doors(str(image_path), str(placed_path))

@@ -1,0 +1,170 @@
+[
+  {
+    "start": [
+      737,
+      198
+    ],
+    "end": [
+      1808,
+      198
+    ],
+    "orientation": "horizontal",
+    "length_px": 1071.0
+  },
+  {
+    "start": [
+      145,
+      394
+    ],
+    "end": [
+      415,
+      394
+    ],
+    "orientation": "horizontal",
+    "length_px": 270.0
+  },
+  {
+    "start": [
+      484,
+      397
+    ],
+    "end": [
+      741,
+      397
+    ],
+    "orientation": "horizontal",
+    "length_px": 257.0
+  },
+  {
+    "start": [
+      1613,
+      394
+    ],
+    "end": [
+      1819,
+      394
+    ],
+    "orientation": "horizontal",
+    "length_px": 206.0
+  },
+  {
+    "start": [
+      164,
+      908
+    ],
+    "end": [
+      941,
+      908
+    ],
+    "orientation": "horizontal",
+    "length_px": 777.0
+  },
+  {
+    "start": [
+      1252,
+      912
+    ],
+    "end": [
+      1777,
+      912
+    ],
+    "orientation": "horizontal",
+    "length_px": 525.0
+  },
+  {
+    "start": [
+      908,
+      1693
+    ],
+    "end": [
+      1763,
+      1693
+    ],
+    "orientation": "horizontal",
+    "length_px": 855.0
+  },
+  {
+    "start": [
+      163,
+      382
+    ],
+    "end": [
+      163,
+      906
+    ],
+    "orientation": "vertical",
+    "length_px": 524.0
+  },
+  {
+    "start": [
+      739,
+      203
+    ],
+    "end": [
+      739,
+      401
+    ],
+    "orientation": "vertical",
+    "length_px": 198.0
+  },
+  {
+    "start": [
+      910,
+      909
+    ],
+    "end": [
+      910,
+      1383
+    ],
+    "orientation": "vertical",
+    "length_px": 474.0
+  },
+  {
+    "start": [
+      909,
+      1412
+    ],
+    "end": [
+      909,
+      1694
+    ],
+    "orientation": "vertical",
+    "length_px": 282.0
+  },
+  {
+    "start": [
+      1252,
+      914
+    ],
+    "end": [
+      1252,
+      1107
+    ],
+    "orientation": "vertical",
+    "length_px": 193.0
+  },
+  {
+    "start": [
+      1748,
+      175
+    ],
+    "end": [
+      1748,
+      356
+    ],
+    "orientation": "vertical",
+    "length_px": 181.0
+  },
+  {
+    "start": [
+      1748,
+      486
+    ],
+    "end": [
+      1748,
+      1710
+    ],
+    "orientation": "vertical",
+    "length_px": 1224.0
+  }
+]
