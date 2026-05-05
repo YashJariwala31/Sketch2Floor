@@ -364,9 +364,10 @@ def calculate_polygon_area(vertices: List[Tuple[float, float]]) -> float:
 # =============================================================================
 
 def merge_overlapping_polygons(polygons: List[WallPolygon]) -> List[WallPolygon]:
-    """Merge overlapping wall polygons to eliminate redundancy."""
+    """Merge overlapping and adjacent wall polygons to eliminate redundancy."""
     unique_polygons = {}
 
+    # Step 1: Deduplicate identical polygons
     for poly in polygons:
         # Create canonical key from sorted vertices
         key = tuple(sorted(poly.vertices))
@@ -374,7 +375,156 @@ def merge_overlapping_polygons(polygons: List[WallPolygon]) -> List[WallPolygon]
         if key not in unique_polygons:
             unique_polygons[key] = poly
 
-    return list(unique_polygons.values())
+    deduplicated = list(unique_polygons.values())
+    
+    # Step 2: Merge collinear and adjacent rectangles
+    return merge_adjacent_rectangles(deduplicated)
+
+
+def merge_adjacent_rectangles(polygons: List[WallPolygon]) -> List[WallPolygon]:
+    """Merge collinear and adjacent wall rectangles."""
+    if not polygons:
+        return []
+    
+    # Separate horizontal and vertical walls
+    horizontal_walls = []
+    vertical_walls = []
+    
+    for poly in polygons:
+        vertices = poly.vertices
+        if len(vertices) != 4:
+            continue  # Skip non-rectangular polygons
+        
+        # Find bounding box
+        xs = [v[0] for v in vertices]
+        ys = [v[1] for v in vertices]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        
+        # Determine orientation
+        if abs(x_max - x_min) > abs(y_max - y_min):
+            # Horizontal wall (width > height)
+            horizontal_walls.append({
+                'polygon': poly,
+                'x_min': x_min,
+                'x_max': x_max,
+                'y_min': y_min,
+                'y_max': y_max
+            })
+        else:
+            # Vertical wall (height >= width)
+            vertical_walls.append({
+                'polygon': poly,
+                'x_min': x_min,
+                'x_max': x_max,
+                'y_min': y_min,
+                'y_max': y_max
+            })
+    
+    # Merge horizontal walls
+    merged_horizontal = merge_horizontal_walls(horizontal_walls)
+    
+    # Merge vertical walls
+    merged_vertical = merge_vertical_walls(vertical_walls)
+    
+    # Combine results
+    return [wall['polygon'] for wall in merged_horizontal + merged_vertical]
+
+
+def merge_horizontal_walls(horizontal_walls: List[dict]) -> List[dict]:
+    """Merge adjacent horizontal wall rectangles."""
+    if not horizontal_walls:
+        return []
+    
+    # Group by y-range (same thickness band)
+    y_groups = {}
+    for wall in horizontal_walls:
+        # Create key from y-range (allowing for small floating point differences)
+        y_key = (round(wall['y_min'], 2), round(wall['y_max'], 2))
+        if y_key not in y_groups:
+            y_groups[y_key] = []
+        y_groups[y_key].append(wall)
+    
+    merged = []
+    
+    # Merge within each y-group
+    for y_key, group in y_groups.items():
+        # Sort by x_min
+        group.sort(key=lambda w: w['x_min'])
+        
+        current_merged = [group[0]]
+        
+        for wall in group[1:]:
+            last = current_merged[-1]
+            
+            # Check if walls touch or overlap (x_min <= x_max)
+            if wall['x_min'] <= last['x_max'] + TOLERANCE:
+                # Merge: extend x_max to the furthest edge
+                last['x_max'] = max(last['x_max'], wall['x_max'])
+                
+                # Update the polygon vertices
+                merged_vertices = [
+                    (last['x_min'], last['y_min']),
+                    (last['x_max'], last['y_min']),
+                    (last['x_max'], last['y_max']),
+                    (last['x_min'], last['y_max'])
+                ]
+                last['polygon'] = WallPolygon(merged_vertices, calculate_polygon_area(merged_vertices))
+            else:
+                # No overlap, start new merged wall
+                current_merged.append(wall)
+        
+        merged.extend(current_merged)
+    
+    return merged
+
+
+def merge_vertical_walls(vertical_walls: List[dict]) -> List[dict]:
+    """Merge adjacent vertical wall rectangles."""
+    if not vertical_walls:
+        return []
+    
+    # Group by x-range (same thickness band)
+    x_groups = {}
+    for wall in vertical_walls:
+        # Create key from x-range (allowing for small floating point differences)
+        x_key = (round(wall['x_min'], 2), round(wall['x_max'], 2))
+        if x_key not in x_groups:
+            x_groups[x_key] = []
+        x_groups[x_key].append(wall)
+    
+    merged = []
+    
+    # Merge within each x-group
+    for x_key, group in x_groups.items():
+        # Sort by y_min
+        group.sort(key=lambda w: w['y_min'])
+        
+        current_merged = [group[0]]
+        
+        for wall in group[1:]:
+            last = current_merged[-1]
+            
+            # Check if walls touch or overlap (y_min <= y_max)
+            if wall['y_min'] <= last['y_max'] + TOLERANCE:
+                # Merge: extend y_max to the furthest edge
+                last['y_max'] = max(last['y_max'], wall['y_max'])
+                
+                # Update the polygon vertices
+                merged_vertices = [
+                    (last['x_min'], last['y_min']),
+                    (last['x_max'], last['y_min']),
+                    (last['x_max'], last['y_max']),
+                    (last['x_min'], last['y_max'])
+                ]
+                last['polygon'] = WallPolygon(merged_vertices, calculate_polygon_area(merged_vertices))
+            else:
+                # No overlap, start new merged wall
+                current_merged.append(wall)
+        
+        merged.extend(current_merged)
+    
+    return merged
 
 
 # =============================================================================
