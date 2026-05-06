@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import FloorplanJob
-from .pipeline import seed_demo_job, start_floorplan_job_async
+from .pipeline import is_floorplan_job_active, seed_demo_job, start_floorplan_job_async
 from .serializers import FloorplanJobSerializer
 from .services import delete_job_assets, get_source_stem, mark_job_queued, scaffold_job_outputs
 
@@ -52,6 +52,11 @@ class FloorplanJobStartView(APIView):
         if not job.original_image:
             return Response({'detail': 'Upload an original image before starting the job.'}, status=400)
 
+        if job.status in {FloorplanJob.Status.QUEUED, FloorplanJob.Status.PROCESSING} and is_floorplan_job_active(job.id):
+            serializer = FloorplanJobSerializer(job, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+        scaffold_job_outputs(job, job.metadata.get('source_stem') or get_source_stem(job.original_filename, f'job_{job.id}'))
         mark_job_queued(job, 'queued_from_api')
         start_floorplan_job_async(job.id)
 

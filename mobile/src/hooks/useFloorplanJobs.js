@@ -99,16 +99,9 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
         mimeType: asset.mimeType || 'image/jpeg',
       });
 
-      let nextJob = created;
-      try {
-        nextJob = await startJob(created.id);
-      } catch (startError) {
-        setError(startError.message || 'Uploaded, but could not start processing');
-      }
-
-      setSelectedJob(nextJob);
+      setSelectedJob(created);
       await loadJobs({ showLoading: false });
-      return nextJob;
+      return created;
     } catch (err) {
       const parsed = err.message || failureMessage || 'Unable to upload image';
       setError(parsed);

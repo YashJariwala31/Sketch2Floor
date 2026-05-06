@@ -55,7 +55,7 @@ def draw_doors(image_path, placed_json_path):
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        raise SystemExit('Usage: python overlay.py <image_id> [--doors <placed_doors.json>]')
+        raise SystemExit('Usage: python overlay.py <image_id> [--doors <placed_doors.json>] [--out <overlay.png>]')
 
     base_path = Path(__file__).resolve().parent
     root_path = base_path.parent
@@ -82,7 +82,16 @@ if __name__ == '__main__':
         placed_path = Path(
             os.environ.get('S2FP_PLACED_DOORS_PATH', str(root_path / 'placed_doors.json'))
         )
-    out_path = root_path / 'predictions' / f'overlay_{image_id}.png'
+    out_path = (
+        Path(sys.argv[sys.argv.index('--out') + 1])
+        if '--out' in sys.argv
+        else Path(
+            os.environ.get(
+                'S2FP_OVERLAY_PATH',
+                str(root_path / 'predictions' / f'overlay_{image_id}.png'),
+            )
+        )
+    )
 
     output = draw_doors(str(image_path), str(placed_path))
     if output is None:

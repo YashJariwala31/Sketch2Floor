@@ -9,7 +9,7 @@ from pathlib import Path
 from django.conf import settings
 
 from .models import FloorplanJob
-from .services import build_expected_output_paths, get_source_stem
+from .services import build_expected_output_paths, get_source_stem, scaffold_job_outputs
 
 
 REPO_ROOT = Path(settings.BASE_DIR).parent
@@ -22,6 +22,8 @@ REQUIRED_PIPELINE_MODULES = [
 ]
 
 PIPELINE_LOCK = threading.Lock()
+ACTIVE_JOB_IDS = set()
+ACTIVE_JOB_IDS_LOCK = threading.Lock()
 
 
 def _run_command(args, *, env=None):
@@ -68,6 +70,24 @@ def _copy_if_exists(src: Path, dst: Path):
 def _unlink_if_exists(path: Path):
     if path.exists() and path.is_file():
         path.unlink()
+
+
+def _claim_job_start(job_id: int) -> bool:
+    with ACTIVE_JOB_IDS_LOCK:
+        if job_id in ACTIVE_JOB_IDS:
+            return False
+        ACTIVE_JOB_IDS.add(job_id)
+        return True
+
+
+def _release_job_start(job_id: int):
+    with ACTIVE_JOB_IDS_LOCK:
+        ACTIVE_JOB_IDS.discard(job_id)
+
+
+def is_floorplan_job_active(job_id: int) -> bool:
+    with ACTIVE_JOB_IDS_LOCK:
+        return job_id in ACTIVE_JOB_IDS
 
 
 def _check_pipeline_dependencies():
@@ -138,181 +158,213 @@ def _sync_pipeline_outputs(job: FloorplanJob):
 
 
 def process_floorplan_job(job_id: int):
-    job = FloorplanJob.objects.get(pk=job_id)
-    if not job.original_image:
-        job.status = FloorplanJob.Status.FAILED
-        job.metadata = {**job.metadata, 'error': 'No original image uploaded.'}
-        job.save(update_fields=['status', 'metadata', 'updated_at'])
-        return
-
-    source_stem, _ = _job_output_roots(job)
-    image_path = Path(job.original_image.path)
-    python = sys.executable
-    missing_dependencies = _check_pipeline_dependencies()
-
     try:
-        if missing_dependencies:
-            raise RuntimeError(
-                "Missing backend pipeline dependencies: "
-                + ", ".join(missing_dependencies)
-                + ". Install them with `pip install -r backend/requirements-pipeline.txt` in the Python environment that runs Django."
-            )
+        job = FloorplanJob.objects.get(pk=job_id)
+        if not job.original_image:
+            job.status = FloorplanJob.Status.FAILED
+            job.metadata = {**job.metadata, 'error': 'No original image uploaded.'}
+            job.save(update_fields=['status', 'metadata', 'updated_at'])
+            return
 
-        job.status = FloorplanJob.Status.PROCESSING
-        job.metadata = {
-            **job.metadata,
-            'pipeline_state': 'running',
-            'source_stem': source_stem,
-            'python_executable': python,
-        }
-        job.save(update_fields=['status', 'metadata', 'updated_at'])
-
+        source_stem, job_outputs = _job_output_roots(job)
+        scaffold_job_outputs(job, source_stem)
+        image_path = Path(job.original_image.path)
+        python = sys.executable
+        missing_dependencies = _check_pipeline_dependencies()
         command_log = []
-        pipeline_outputs = _pipeline_outputs(source_stem)
-        wall_stage_dir = REPO_ROOT / 'wall_pipeline' / 'data' / 'intermediate'
-        placed_doors_path = REPO_ROOT / 'placed_doors.json'
 
-        with PIPELINE_LOCK:
-            for transient_path in [
-                pipeline_outputs['door_mask_path'],
-                pipeline_outputs['window_mask_path'],
-                pipeline_outputs['geometry_path'],
-                pipeline_outputs['overlay_path'],
-                pipeline_outputs['combined_overlay_path'],
-                pipeline_outputs['wall_polygons_path'],
-                pipeline_outputs['room_polygons_path'],
-                pipeline_outputs['fused_floorplan_path'],
-                placed_doors_path,
-                wall_stage_dir / 'wall_polygons.json',
-                wall_stage_dir / 'room_polygons.json',
-            ]:
-                _unlink_if_exists(transient_path)
-
-            command_log.append(_run_command([python, '-m', 'wall_pipeline.main', str(image_path)]))
-
-            wall_src = wall_stage_dir / 'wall_polygons.json'
-            room_src = wall_stage_dir / 'room_polygons.json'
-            if wall_src.exists():
-                shutil.copyfile(wall_src, pipeline_outputs['wall_polygons_path'])
-            if room_src.exists():
-                shutil.copyfile(room_src, pipeline_outputs['room_polygons_path'])
-
-            command_log.append(_run_command([python, '-m', 'opening_pipeline.test_final', '--image', str(image_path)]))
-            geometry_output = pipeline_outputs['geometry_path']
-            command_log.append(
-                _run_command(
-                    [
-                        python,
-                        '-m',
-                        'opening_pipeline.mask_to_geometry',
-                        '--image',
-                        str(image_path),
-                        '--door_mask',
-                        str(pipeline_outputs['door_mask_path']),
-                        '--window_mask',
-                        str(pipeline_outputs['window_mask_path']),
-                        '--out_json',
-                        str(geometry_output),
-                        '--out_annotated',
-                        str(REPO_ROOT / 'predictions' / f'{source_stem}_annotated.png'),
-                    ]
-                )
-            )
-
-            if not geometry_output.exists() or geometry_output.stat().st_size == 0:
+        try:
+            if missing_dependencies:
                 raise RuntimeError(
-                    f'Geometry output was not generated for {source_stem}. '
-                    'The mask-to-geometry step completed without writing the expected JSON file.'
+                    "Missing backend pipeline dependencies: "
+                    + ", ".join(missing_dependencies)
+                    + ". Install them with `pip install -r backend/requirements-pipeline.txt` in the Python environment that runs Django."
                 )
 
-            env = _pipeline_env(
-                {
-                    'IMAGE_ID': source_stem,
-                    'S2FP_GEOMETRY_PATH': str(geometry_output),
-                    'S2FP_WALLS_PATH': str(pipeline_outputs['wall_polygons_path']),
-                    'S2FP_ROOMS_PATH': str(pipeline_outputs['room_polygons_path']),
-                    'S2FP_PLACED_DOORS_PATH': str(placed_doors_path),
-                }
-            )
-            command_log.append(_run_command([python, '-m', 'opening_pipeline.run_transform'], env=env))
-            command_log.append(
-                _run_command(
-                    [
-                        python,
-                        '-m',
-                        'opening_pipeline.overlay',
-                        str(image_path),
-                        '--doors',
-                        str(placed_doors_path),
-                    ],
-                    env=env,
-                )
-            )
-            command_log.append(
-                _run_command(
-                    [
-                        python,
-                        '-m',
-                        'utils.floorplan_fusion',
-                        '--walls',
-                        str(pipeline_outputs['wall_polygons_path']),
-                        '--doors',
-                        str(placed_doors_path),
-                        '--geometry',
-                        str(geometry_output),
-                        '--out',
-                        str(pipeline_outputs['fused_floorplan_path']),
-                    ]
-                )
-            )
-            command_log.append(
-                _run_command(
-                    [
-                        python,
-                        '-m',
-                        'utils.combined_overlay',
-                        '--image',
-                        str(image_path),
-                        '--walls',
-                        str(pipeline_outputs['fused_floorplan_path']),
-                        '--doors',
-                        str(placed_doors_path),
-                        '--out',
-                        str(pipeline_outputs['combined_overlay_path']),
-                    ]
-                )
-            )
+            job.status = FloorplanJob.Status.PROCESSING
+            job.metadata = {
+                **job.metadata,
+                'pipeline_state': 'running',
+                'source_stem': source_stem,
+                'python_executable': python,
+            }
+            job.save(update_fields=['status', 'metadata', 'updated_at'])
 
-        _sync_pipeline_outputs(job)
-        job.status = FloorplanJob.Status.COMPLETED
-        job.metadata = {
-            **job.metadata,
-            'pipeline_state': 'completed',
-            'command_log': command_log,
-        }
-        job.save(update_fields=['status', 'metadata', 'updated_at'])
-    except subprocess.CalledProcessError as exc:
-        job.status = FloorplanJob.Status.FAILED
-        job.metadata = {
-            **job.metadata,
-            'pipeline_state': 'failed',
-            'error': str(exc),
-            'stdout': exc.stdout,
-            'stderr': exc.stderr,
-            'python_executable': python,
-        }
-        job.save(update_fields=['status', 'metadata', 'updated_at'])
-    except Exception as exc:
-        job.status = FloorplanJob.Status.FAILED
-        job.metadata = {
-            **job.metadata,
-            'pipeline_state': 'failed',
-            'error': str(exc),
-        }
-        job.save(update_fields=['status', 'metadata', 'updated_at'])
+            wall_stage_dir = REPO_ROOT / 'wall_pipeline' / 'data' / 'intermediate'
+            predictions_root = job_outputs['predictions_root']
+            intermediate_root = job_outputs['intermediate_root']
+            predictions_root.mkdir(parents=True, exist_ok=True)
+            intermediate_root.mkdir(parents=True, exist_ok=True)
+
+            door_mask_path = job_outputs['door_mask_path']
+            window_mask_path = job_outputs['window_mask_path']
+            geometry_output = job_outputs['geometry_path']
+            overlay_output = job_outputs['overlay_path']
+            combined_overlay_output = job_outputs['combined_overlay_path']
+            wall_polygons_output = job_outputs['wall_polygons_path']
+            room_polygons_output = job_outputs['room_polygons_path']
+            fused_floorplan_output = job_outputs['fused_floorplan_path']
+            placed_doors_path = intermediate_root / 'placed_doors.json'
+            annotated_output = predictions_root / f'{source_stem}_annotated.png'
+
+            with PIPELINE_LOCK:
+                for transient_path in [
+                    door_mask_path,
+                    window_mask_path,
+                    geometry_output,
+                    overlay_output,
+                    combined_overlay_output,
+                    wall_polygons_output,
+                    room_polygons_output,
+                    fused_floorplan_output,
+                    placed_doors_path,
+                    annotated_output,
+                    wall_stage_dir / 'wall_polygons.json',
+                    wall_stage_dir / 'room_polygons.json',
+                ]:
+                    _unlink_if_exists(transient_path)
+
+                command_log.append(_run_command([python, '-m', 'wall_pipeline.main', str(image_path)]))
+
+                wall_src = wall_stage_dir / 'wall_polygons.json'
+                room_src = wall_stage_dir / 'room_polygons.json'
+                if wall_src.exists():
+                    shutil.copyfile(wall_src, wall_polygons_output)
+                if room_src.exists():
+                    shutil.copyfile(room_src, room_polygons_output)
+
+                command_log.append(
+                    _run_command(
+                        [python, '-m', 'opening_pipeline.test_final', '--image', str(image_path)],
+                        env={'S2FP_PREDICTIONS_DIR': str(predictions_root)},
+                    )
+                )
+                command_log.append(
+                    _run_command(
+                        [
+                            python,
+                            '-m',
+                            'opening_pipeline.mask_to_geometry',
+                            '--image',
+                            str(image_path),
+                            '--door_mask',
+                            str(door_mask_path),
+                            '--window_mask',
+                            str(window_mask_path),
+                            '--out_json',
+                            str(geometry_output),
+                            '--out_annotated',
+                            str(annotated_output),
+                        ]
+                    )
+                )
+
+                if not geometry_output.exists() or geometry_output.stat().st_size == 0:
+                    raise RuntimeError(
+                        f'Geometry output was not generated for {source_stem}. '
+                        'The mask-to-geometry step completed without writing the expected JSON file.'
+                    )
+
+                env = _pipeline_env(
+                    {
+                        'IMAGE_ID': source_stem,
+                        'S2FP_GEOMETRY_PATH': str(geometry_output),
+                        'S2FP_WALLS_PATH': str(wall_polygons_output),
+                        'S2FP_ROOMS_PATH': str(room_polygons_output),
+                        'S2FP_PLACED_DOORS_PATH': str(placed_doors_path),
+                        'S2FP_OVERLAY_PATH': str(overlay_output),
+                    }
+                )
+                command_log.append(_run_command([python, '-m', 'opening_pipeline.run_transform'], env=env))
+                command_log.append(
+                    _run_command(
+                        [
+                            python,
+                            '-m',
+                            'opening_pipeline.overlay',
+                            str(image_path),
+                            '--doors',
+                            str(placed_doors_path),
+                            '--out',
+                            str(overlay_output),
+                        ],
+                        env=env,
+                    )
+                )
+                command_log.append(
+                    _run_command(
+                        [
+                            python,
+                            '-m',
+                            'utils.floorplan_fusion',
+                            '--walls',
+                            str(wall_polygons_output),
+                            '--doors',
+                            str(placed_doors_path),
+                            '--geometry',
+                            str(geometry_output),
+                            '--out',
+                            str(fused_floorplan_output),
+                        ]
+                    )
+                )
+                command_log.append(
+                    _run_command(
+                        [
+                            python,
+                            '-m',
+                            'utils.combined_overlay',
+                            '--image',
+                            str(image_path),
+                            '--walls',
+                            str(fused_floorplan_output),
+                            '--doors',
+                            str(placed_doors_path),
+                            '--out',
+                            str(combined_overlay_output),
+                        ]
+                    )
+                )
+
+            job.status = FloorplanJob.Status.COMPLETED
+            job.metadata = {
+                **job.metadata,
+                'pipeline_state': 'completed',
+                'command_log': command_log,
+                'artifact_roots': {
+                    'predictions_root': str(predictions_root),
+                    'intermediate_root': str(intermediate_root),
+                },
+            }
+            job.save(update_fields=['status', 'metadata', 'updated_at'])
+        except subprocess.CalledProcessError as exc:
+            job.status = FloorplanJob.Status.FAILED
+            job.metadata = {
+                **job.metadata,
+                'pipeline_state': 'failed',
+                'error': str(exc),
+                'stdout': exc.stdout,
+                'stderr': exc.stderr,
+                'python_executable': python,
+                'command_log': command_log,
+            }
+            job.save(update_fields=['status', 'metadata', 'updated_at'])
+        except Exception as exc:
+            job.status = FloorplanJob.Status.FAILED
+            job.metadata = {
+                **job.metadata,
+                'pipeline_state': 'failed',
+                'error': str(exc),
+                'command_log': command_log,
+            }
+            job.save(update_fields=['status', 'metadata', 'updated_at'])
+    finally:
+        _release_job_start(job_id)
 
 
 def start_floorplan_job_async(job_id: int):
+    if not _claim_job_start(job_id):
+        return None
     thread = threading.Thread(target=process_floorplan_job, args=(job_id,), daemon=True)
     thread.start()
     return thread

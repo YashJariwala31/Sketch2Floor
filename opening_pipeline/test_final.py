@@ -61,7 +61,7 @@ args = parser.parse_args()
 
 
 INPUT_DIR = "original"
-OUTPUT_DIR = "predictions"
+OUTPUT_DIR = os.environ.get("S2FP_PREDICTIONS_DIR", "predictions")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
@@ -92,9 +92,14 @@ if args.image is not None:
 else:
     filepaths = [os.path.join(INPUT_DIR, f) for f in sorted(os.listdir(INPUT_DIR))]
 
+
+def _save_required_mask(path, image, label):
+    if not cv2.imwrite(path, image):
+        raise RuntimeError(f"Failed to write {label} mask to {path}")
+
 for filepath in filepaths:
     filename = os.path.basename(filepath)
-    if not (filename.endswith(".jpeg") or filename.endswith(".jpg")):
+    if not filename.lower().endswith((".jpeg", ".jpg", ".png")):
         continue
 
     print(f"\nProcessing: {filename}")
@@ -146,8 +151,8 @@ for filepath in filepaths:
     window = cv2.resize(window, (w, h))
 
     stem = os.path.splitext(filename)[0]
-    cv2.imwrite(f"{OUTPUT_DIR}/{stem}_door.png", door)
-    cv2.imwrite(f"{OUTPUT_DIR}/{stem}_window.png", window)
+    _save_required_mask(f"{OUTPUT_DIR}/{stem}_door.png", door, "door")
+    _save_required_mask(f"{OUTPUT_DIR}/{stem}_window.png", window, "window")
 
 
 print("\nDone")
