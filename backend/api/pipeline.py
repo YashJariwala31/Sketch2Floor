@@ -9,7 +9,7 @@ from pathlib import Path
 from django.conf import settings
 
 from .models import FloorplanJob
-from .services import build_expected_output_paths, get_source_stem, scaffold_job_outputs
+from .services import build_expected_output_paths, get_job_source_stem, scaffold_job_outputs
 
 
 REPO_ROOT = Path(settings.BASE_DIR).parent
@@ -101,7 +101,7 @@ def _check_pipeline_dependencies():
 
 
 def _job_output_roots(job: FloorplanJob):
-    source_stem = job.metadata.get('source_stem') or get_source_stem(job.original_filename, f'job_{job.id}')
+    source_stem = get_job_source_stem(job, f'job_{job.id}')
     planned = build_expected_output_paths(job.id, source_stem)
     return source_stem, {key: Path(value) for key, value in planned.items()}
 

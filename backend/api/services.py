@@ -43,6 +43,38 @@ def get_source_stem(filename: str, fallback: str = 'floorplan') -> str:
     return stem or fallback
 
 
+def get_job_source_stem(job: FloorplanJob, fallback: str | None = None) -> str:
+    fallback = fallback or f'job_{job.id}'
+    image_field = getattr(job, 'original_image', None)
+
+    if image_field:
+        stored_name = getattr(image_field, 'name', '')
+        if stored_name:
+            stem = get_source_stem(stored_name, fallback)
+            if stem:
+                return stem
+
+        try:
+            stored_path = getattr(image_field, 'path', '')
+        except (NotImplementedError, ValueError):
+            stored_path = ''
+
+        if stored_path:
+            stem = get_source_stem(stored_path, fallback)
+            if stem:
+                return stem
+
+    original_filename = getattr(job, 'original_filename', '')
+    if original_filename:
+        return get_source_stem(original_filename, fallback)
+
+    metadata_stem = (getattr(job, 'metadata', {}) or {}).get('source_stem')
+    if metadata_stem:
+        return get_source_stem(metadata_stem, fallback)
+
+    return fallback
+
+
 def scaffold_job_outputs(job: FloorplanJob, source_stem: str) -> FloorplanJob:
     paths = build_expected_output_paths(job.id, source_stem)
 

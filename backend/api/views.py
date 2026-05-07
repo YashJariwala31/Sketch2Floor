@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from .models import FloorplanJob
 from .pipeline import is_floorplan_job_active, seed_demo_job, start_floorplan_job_async
 from .serializers import FloorplanJobSerializer
-from .services import delete_job_assets, get_source_stem, mark_job_queued, scaffold_job_outputs
+from .services import delete_job_assets, get_job_source_stem, mark_job_queued, scaffold_job_outputs
 
 
 class HealthView(APIView):
@@ -32,7 +32,7 @@ class FloorplanJobListCreateView(generics.ListCreateAPIView):
         if not image:
             return
 
-        scaffold_job_outputs(job, get_source_stem(image.name))
+        scaffold_job_outputs(job, get_job_source_stem(job))
         mark_job_queued(job, 'queued_from_upload')
         start_floorplan_job_async(job.id)
 
@@ -56,7 +56,7 @@ class FloorplanJobStartView(APIView):
             serializer = FloorplanJobSerializer(job, context={'request': request})
             return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
-        scaffold_job_outputs(job, job.metadata.get('source_stem') or get_source_stem(job.original_filename, f'job_{job.id}'))
+        scaffold_job_outputs(job, get_job_source_stem(job, f'job_{job.id}'))
         mark_job_queued(job, 'queued_from_api')
         start_floorplan_job_async(job.id)
 
