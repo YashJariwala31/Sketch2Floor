@@ -204,6 +204,12 @@ export default function App() {
     }
   }
 
+  function handleTryAnother() {
+    clearSelectedJob();
+    setActiveTab(TABS.HOME);
+    setHomeView(HOME_VIEWS.UPLOAD);
+  }
+
   function renderAuthenticatedScreen() {
     if (selectedJob) {
       return (
@@ -212,6 +218,7 @@ export default function App() {
           busy={busy}
           error={error}
           onBack={clearSelectedJob}
+          onTryAnother={handleTryAnother}
           onRefresh={handleRefreshJobs}
           onStartJob={() => handleStartJob(selectedJob)}
           onDeleteJob={handleDeleteJob}

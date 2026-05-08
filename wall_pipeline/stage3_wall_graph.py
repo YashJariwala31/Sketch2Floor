@@ -32,6 +32,7 @@ import math
 import numpy as np
 import cv2
 from collections import defaultdict
+from . import utils
 
 # -- Tolerances ---------------------------------------------------------------
 AXIS_SNAP_TOL = 5           # Snap near-identical axis coordinates
@@ -786,20 +787,13 @@ def report(nodes, edges):
 # =============================================================================
 
 def get_image_dimensions():
-    p = os.path.join("data", "intermediate", "binary_wall_mask.png")
-    if os.path.exists(p):
-        img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
-        if img is not None:
-            return img.shape
-    return (720, 1024)
+    return utils.get_image_dimensions()
 
 
 def save_graph(nodes, edges, path=None):
     if path is None:
         path = os.path.join("data", "intermediate", "wall_graph.json")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"nodes": nodes, "edges": edges}, f, indent=2)
+    utils.save_json({"nodes": nodes, "edges": edges}, path)
     print(f"Saved -> {path}")
 
 

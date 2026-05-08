@@ -28,6 +28,8 @@ import numpy as np
 import cv2
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
+from . import utils
+from dataclasses import dataclass
 
 
 # -- Constants ---------------------------------------------------------------
@@ -84,12 +86,7 @@ def load_wall_graph(graph_path=None):
     if graph_path is None:
         graph_path = os.path.join("data", "intermediate", "wall_graph.json")
     
-    if not os.path.exists(graph_path):
-        raise FileNotFoundError(f"Wall graph not found: {graph_path}")
-    
-    with open(graph_path, 'r') as f:
-        data = json.load(f)
-    
+    data = utils.load_json(graph_path)
     nodes = data['nodes']
     edges = data['edges']
     
@@ -102,119 +99,39 @@ def load_wall_graph(graph_path=None):
 # =============================================================================
 
 def parse_wall_segments(nodes: List[Dict], edges: List[Dict]) -> List[WallSegment]:
-    """Convert graph nodes and edges to wall segments with dynamic schema detection."""
+    """Convert graph nodes and edges to wall segments."""
     segments = []
-    schema_detected = None
     
     # Create node lookup by ID for fast access
     node_lookup = {node['id']: node for node in nodes}
     
     for i, edge in enumerate(edges):
-        # Detect schema on first edge
-        if schema_detected is None:
-            edge_keys = list(edge.keys())
-            
-            # Check for node index pairs
-            if 'start_node' in edge and 'end_node' in edge:
-                schema_detected = 'start_node/end_node'
-                print(f"Detected edge schema: {schema_detected}")
-            elif 'node1' in edge and 'node2' in edge:
-                schema_detected = 'node1/node2'
-                print(f"Detected edge schema: {schema_detected}")
-            elif 'node_a' in edge and 'node_b' in edge:
-                schema_detected = 'node_a/node_b'
-                print(f"Detected edge schema: {schema_detected}")
-            elif 'u' in edge and 'v' in edge:
-                schema_detected = 'u/v'
-                print(f"Detected edge schema: {schema_detected}")
-            # Check for direct coordinate pairs
-            elif 'start' in edge and 'end' in edge:
-                schema_detected = 'start/end (coordinates)'
-                print(f"Detected edge schema: {schema_detected}")
-            else:
-                raise ValueError(f"Unknown edge schema. Edge keys: {edge_keys}. Edge content: {edge}")
+        node1_id = edge['start_node']
+        node2_id = edge['end_node']
         
-        # Extract coordinates based on detected schema
-        if schema_detected == 'start_node/end_node':
-            node1_id = edge['start_node']
-            node2_id = edge['end_node']
-            
-            if node1_id not in node_lookup or node2_id not in node_lookup:
-                raise ValueError(f"Edge references non-existent node: {node1_id} or {node2_id}")
-            
-            node1 = node_lookup[node1_id]
-            node2 = node_lookup[node2_id]
-            
-            start = Point(node1['x'], node1['y'])
-            end = Point(node2['x'], node2['y'])
-            
-        elif schema_detected == 'node1/node2':
-            node1_id = edge['node1']
-            node2_id = edge['node2']
-            
-            if node1_id not in node_lookup or node2_id not in node_lookup:
-                raise ValueError(f"Edge references non-existent node: {node1_id} or {node2_id}")
-            
-            node1 = node_lookup[node1_id]
-            node2 = node_lookup[node2_id]
-            
-            start = Point(node1['x'], node1['y'])
-            end = Point(node2['x'], node2['y'])
-            
-        elif schema_detected == 'node_a/node_b':
-            node1_id = edge['node_a']
-            node2_id = edge['node_b']
-            
-            if node1_id not in node_lookup or node2_id not in node_lookup:
-                raise ValueError(f"Edge references non-existent node: {node1_id} or {node2_id}")
-            
-            node1 = node_lookup[node1_id]
-            node2 = node_lookup[node2_id]
-            
-            start = Point(node1['x'], node1['y'])
-            end = Point(node2['x'], node2['y'])
-            
-        elif schema_detected == 'u/v':
-            node1_id = edge['u']
-            node2_id = edge['v']
-            
-            if node1_id not in node_lookup or node2_id not in node_lookup:
-                raise ValueError(f"Edge references non-existent node: {node1_id} or {node2_id}")
-            
-            node1 = node_lookup[node1_id]
-            node2 = node_lookup[node2_id]
-            
-            start = Point(node1['x'], node1['y'])
-            end = Point(node2['x'], node2['y'])
-            
-        elif schema_detected == 'start/end (coordinates)':
-            # Direct coordinates in edge
-            start_coords = edge['start']
-            end_coords = edge['end']
-            
-            start = Point(start_coords['x'], start_coords['y'])
-            end = Point(end_coords['x'], end_coords['y'])
-            
-        else:
-            raise ValueError(f"Unhandled schema: {schema_detected}")
+        if node1_id not in node_lookup or node2_id not in node_lookup:
+            raise ValueError(f"Edge references non-existent node: {node1_id} or {node2_id}")
+        
+        node1 = node_lookup[node1_id]
+        node2 = node_lookup[node2_id]
+        
+        start = Point(node1['x'], node1['y'])
+        end = Point(node2['x'], node2['y'])
         
         # Snap nearly axis-aligned segments to perfect alignment
         dx = end.x - start.x
         dy = end.y - start.y
-        
         SNAP_TOLERANCE = 5
         
         if abs(dy) < SNAP_TOLERANCE:
-            # Force horizontal alignment
             end = Point(end.x, start.y)
         elif abs(dx) < SNAP_TOLERANCE:
-            # Force vertical alignment
             end = Point(start.x, end.y)
         
-        segment = WallSegment(start, end, i)  # Use edge index as node_id
+        segment = WallSegment(start, end, i)
         segments.append(segment)
     
-    print(f"Parsed {len(segments)} wall segments using schema: {schema_detected}")
+    print(f"Parsed {len(segments)} wall segments using schema: start_node/end_node")
     return segments
 
 
@@ -349,14 +266,8 @@ def generate_trimmed_branch_rectangle(branch: WallSegment, main_wall: WallSegmen
 # =============================================================================
 
 def calculate_polygon_area(vertices: List[Tuple[float, float]]) -> float:
-    """Calculate area using shoelace formula."""
-    n = len(vertices)
-    area = 0.0
-    for i in range(n):
-        j = (i + 1) % n
-        area += vertices[i][0] * vertices[j][1]
-        area -= vertices[j][0] * vertices[i][1]
-    return abs(area) / 2.0
+    """Calculate area using utils."""
+    return utils.calculate_polygon_area(vertices)
 
 
 # =============================================================================
@@ -579,23 +490,11 @@ def save_wall_polygons(polygons: List[WallPolygon], output_path=None):
     if output_path is None:
         output_path = os.path.join("data", "intermediate", "wall_polygons.json")
     
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    # Load scale factors to restore original coordinate space
-    try:
-        scale_path = os.path.join("data", "intermediate", "scale_factors.json")
-        with open(scale_path, 'r') as sf:
-            factors = json.load(sf)
-        sx = float(factors.get("scale_x", 1.0))
-        sy = float(factors.get("scale_y", 1.0))
-        print(f"Loaded scale factors: sx={sx:.4f}, sy={sy:.4f}")
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        sx, sy = 1.0, 1.0
-        print("Scale factors not found – using identity (1.0, 1.0)")
+    sx, sy = utils.load_scale_factors()
+    print(f"Loaded scale factors: sx={sx:.4f}, sy={sy:.4f}")
     
     data = []
     for i, polygon in enumerate(polygons):
-        # Upscale vertex coordinates to original image dimensions
         upscaled_vertices = [
             (v[0] * sx, v[1] * sy) for v in polygon.vertices
         ]
@@ -606,9 +505,7 @@ def save_wall_polygons(polygons: List[WallPolygon], output_path=None):
             "area_px": upscaled_area
         })
     
-    with open(output_path, 'w') as f:
-        json.dump(data, f, indent=2)
-    
+    utils.save_json(data, output_path)
     print(f"Saved wall polygons -> {output_path}")
 
 

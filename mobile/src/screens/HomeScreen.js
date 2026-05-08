@@ -57,7 +57,6 @@ export default function HomeScreen({ busy, onOpenUploadScreen, onCaptureImage, t
 
         <View style={styles.heroCard}>
           <View style={styles.heroVisual}>{blueprint(styles)}</View>
-          <Text style={styles.heroKicker}>New project</Text>
           <Text style={styles.heroTitle}>Upload or capture a hand-drawn sketch</Text>
         </View>
 

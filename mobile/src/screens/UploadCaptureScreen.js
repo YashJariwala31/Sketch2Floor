@@ -53,7 +53,6 @@ export default function UploadCaptureScreen({ busy, onPickFromGallery, onOpenCam
 
           <View style={styles.headerCopy}>
             <Text style={styles.title}>Upload sketch</Text>
-            <Text style={styles.subtitle}>Choose a source image</Text>
           </View>
         </View>
 

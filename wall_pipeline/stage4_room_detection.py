@@ -26,6 +26,7 @@ import math
 import numpy as np
 import cv2
 from collections import defaultdict
+from . import utils
 
 
 # -- Tolerances ---------------------------------------------------------------
@@ -40,16 +41,7 @@ MORPH_KERNEL_SIZE = 3       # Closing kernel to seal tiny leaks
 
 def load_wall_mask(mask_path=None):
     """Load binary wall mask from Stage 1 output."""
-    if mask_path is None:
-        mask_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
-    
-    if not os.path.exists(mask_path):
-        raise FileNotFoundError(f"Binary wall mask not found: {mask_path}")
-    
-    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        raise ValueError(f"Failed to load wall mask: {mask_path}")
-    
+    mask = utils.load_wall_mask(mask_path)
     print(f"Loaded wall mask: {mask.shape[1]}x{mask.shape[0]}")
     return mask
 
@@ -205,12 +197,8 @@ def save_outputs(rooms, save_dir=None):
     if save_dir is None:
         save_dir = os.path.join("data", "intermediate")
     
-    os.makedirs(save_dir, exist_ok=True)
-    
     json_path = os.path.join(save_dir, "room_polygons.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(rooms, f, indent=2)
-    
+    utils.save_json(rooms, json_path)
     print(f"Saved -> {json_path}")
 
 

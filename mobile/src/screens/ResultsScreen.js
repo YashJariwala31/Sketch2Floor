@@ -94,6 +94,7 @@ export default function ResultsScreen({
   busy,
   error,
   onBack,
+  onTryAnother,
   onRefresh,
   onStartJob,
   onDeleteJob,
@@ -174,19 +175,15 @@ export default function ResultsScreen({
             </View>
 
             <View style={styles.actionRow}>
-              <Pressable style={[styles.actionButton, styles.primaryActionButton]} onPress={() => onSaveResult(job.combined_overlay_url)} disabled={busy || !job.combined_overlay_url}>
-                <Text style={styles.primaryActionText}>{busy ? 'Saving' : 'Download'}</Text>
+              <Pressable style={[styles.actionButton, styles.primaryActionButton, { flexGrow: 1 }]} onPress={() => onSaveResult(job.combined_overlay_url)} disabled={busy || !job.combined_overlay_url}>
+                <Text style={styles.primaryActionText}>{busy ? 'Saving...' : 'Download'}</Text>
               </Pressable>
-              <Pressable style={[styles.actionButton, styles.secondaryActionButton]} onPress={() => onSaveResult(job.combined_overlay_url)} disabled={busy || !job.combined_overlay_url}>
-                <Text style={styles.secondaryActionText}>Save</Text>
-              </Pressable>
-              <Pressable style={[styles.actionButton, styles.secondaryActionButton, styles.tryAnotherButton]} onPress={onBack}>
+              <Pressable style={[styles.actionButton, styles.secondaryActionButton, styles.tryAnotherButton]} onPress={onTryAnother}>
                 <Text style={styles.secondaryActionText}>Try Another</Text>
               </Pressable>
             </View>
 
             <Text style={styles.outputTitle}>Digital floor plan generated</Text>
-            <Text style={styles.outputSubtitle}>Walls, openings, and layout are ready.</Text>
           </View>
         </ScrollView>
       </Animated.View>

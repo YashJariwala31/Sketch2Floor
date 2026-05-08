@@ -16,29 +16,12 @@ import math
 import numpy as np
 import cv2
 from collections import defaultdict
+from .utils import compute_length, compute_angle_deg, orientation_label
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def compute_length(x1, y1, x2, y2):
-    return float(math.hypot(x2 - x1, y2 - y1))
-
-
-def compute_angle_deg(x1, y1, x2, y2):
-    return math.degrees(math.atan2(float(y2) - float(y1),
-                                   float(x2) - float(x1))) % 180.0
-
-
-def orientation_label(angle_deg):
-    """Keep only segments within +/-10 deg of 0 deg or 90 deg."""
-    if angle_deg <= 10.0 or angle_deg >= 170.0:
-        return "horizontal"
-    if abs(angle_deg - 90.0) <= 10.0:
-        return "vertical"
-    return None
-
 
 # ---------------------------------------------------------------------------
 # Step 1: Load inputs
