@@ -35,7 +35,7 @@ from dataclasses import dataclass
 # -- Constants ---------------------------------------------------------------
 WALL_THICKNESS_PX = 20
 HALF_THICKNESS = WALL_THICKNESS_PX / 2
-TOLERANCE = 1e-6  # For floating point comparisons
+TOLERANCE = 2.0  # For floating point comparisons (increased for robust axis detection)
 
 
 # =============================================================================
@@ -139,13 +139,24 @@ def parse_wall_segments(nodes: List[Dict], edges: List[Dict]) -> List[WallSegmen
 # 3. Generate thick wall rectangles
 # =============================================================================
 
-def generate_wall_rectangle(segment: WallSegment) -> List[Tuple[float, float]]:
-    """Generate rectangle vertices for a thick wall segment."""
+def generate_wall_rectangle(segment: WallSegment, junction_set: set = None) -> List[Tuple[float, float]]:
+    """Generate rectangle vertices for a thick wall segment.
+    
+    At junction endpoints (where multiple walls meet), the rectangle is
+    extended by HALF_THICKNESS along the wall axis so that perpendicular
+    wall rectangles overlap, eliminating corner/T-junction gaps.
+    """
     if segment.is_horizontal:
         y = segment.start.y
         x1, x2 = min(segment.start.x, segment.end.x), max(segment.start.x, segment.end.x)
         
-        # Rectangle vertices: bottom-left, bottom-right, top-right, top-left
+        # Extend at junction endpoints to create overlap
+        if junction_set:
+            if _point_in_set(x1, y, junction_set):
+                x1 -= HALF_THICKNESS
+            if _point_in_set(x2, y, junction_set):
+                x2 += HALF_THICKNESS
+        
         vertices = [
             (x1, y - HALF_THICKNESS),
             (x2, y - HALF_THICKNESS),
@@ -156,7 +167,13 @@ def generate_wall_rectangle(segment: WallSegment) -> List[Tuple[float, float]]:
         x = segment.start.x
         y1, y2 = min(segment.start.y, segment.end.y), max(segment.start.y, segment.end.y)
         
-        # Rectangle vertices: bottom-left, bottom-right, top-right, top-left
+        # Extend at junction endpoints to create overlap
+        if junction_set:
+            if _point_in_set(x, y1, junction_set):
+                y1 -= HALF_THICKNESS
+            if _point_in_set(x, y2, junction_set):
+                y2 += HALF_THICKNESS
+        
         vertices = [
             (x - HALF_THICKNESS, y1),
             (x + HALF_THICKNESS, y1),
@@ -164,9 +181,19 @@ def generate_wall_rectangle(segment: WallSegment) -> List[Tuple[float, float]]:
             (x - HALF_THICKNESS, y2)
         ]
     else:
-        raise ValueError(f"Wall segment must be axis-aligned: {segment}")
+        # Non-axis-aligned segment: skip gracefully instead of crashing
+        print(f"  [WARN] Skipping non-axis-aligned segment: {segment}")
+        return None
     
     return vertices
+
+
+def _point_in_set(x: float, y: float, junction_set: set, tol: float = 2.0) -> bool:
+    """Check if a point (x, y) matches any point in the junction set within tolerance."""
+    for jx, jy in junction_set:
+        if abs(x - jx) <= tol and abs(y - jy) <= tol:
+            return True
+    return False
 
 
 # =============================================================================
@@ -458,20 +485,29 @@ def process_walls():
     # 3. Find junctions
     junctions = find_wall_junctions(segments)
     
-    # 4. Process junctions and generate polygons
-    all_polygons = []
+    # 3b. Build junction point set (nodes with degree >= 2)
+    #     These are corners, T-junctions, and crossings where wall
+    #     rectangles must overlap to eliminate visual gaps.
+    junction_set = set()
+    for point, segs in junctions.items():
+        if len(segs) >= 2:
+            junction_set.add((point.x, point.y))
+    print(f"  Junction points (degree>=2): {len(junction_set)}")
     
-    # Process simple wall segments first
+    # 4. Generate wall polygons with junction-aware extension
+    all_polygons = []
+    skipped = 0
+    
     for segment in segments:
-        rect = generate_wall_rectangle(segment)
+        rect = generate_wall_rectangle(segment, junction_set)
+        if rect is None:
+            skipped += 1
+            continue
         polygon = WallPolygon(rect, calculate_polygon_area(rect))
         all_polygons.append(polygon)
     
-    # Process junctions for corner resolution
-    for junction_point, junction_segments in junctions.items():
-        if len(junction_segments) > 1:
-            junction_polygons = resolve_corner_junction(junction_point, junction_segments)
-            all_polygons.extend(junction_polygons)
+    if skipped:
+        print(f"  [WARN] Skipped {skipped} non-axis-aligned segments")
     
     # 5. Merge overlapping polygons
     final_polygons = merge_overlapping_polygons(all_polygons)
