@@ -71,6 +71,24 @@ async function requestJson(path, options, fallbackMessage) {
   return data;
 }
 
+export async function patchJob(jobId, payload) {
+  return requestJson(
+    `/jobs/${jobId}/`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload || {}),
+    },
+    'Job update failed'
+  );
+}
+
+export async function saveJobAnnotations(jobId, annotations) {
+  return patchJob(jobId, { annotations: Array.isArray(annotations) ? annotations : [] });
+}
+
 export async function testBackendConnection() {
   try {
     const data = await requestJson('/health/', undefined, 'Backend request failed');

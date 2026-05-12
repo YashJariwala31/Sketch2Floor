@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import FloorplanAnnotator from '../components/annotation/FloorplanAnnotator';
 import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
+import { saveJobAnnotations } from '../api/client';
+import { loadLocalAnnotations, saveLocalAnnotations } from '../utils/annotationStorage';
 import { getJobStatusMeta, getResultsScreenTitle, trimMultilineText } from '../utils/jobPresentation';
 
 function Loader({ styles }) {
@@ -124,6 +127,74 @@ export default function ResultsScreen({
   const primaryError = error || job.metadata?.error;
   const stderrPreview = trimMultilineText(job.metadata?.stderr);
 
+  const [measurementMode, setMeasurementMode] = useState(false);
+  const [annotations, setAnnotations] = useState([]);
+  const [undoStack, setUndoStack] = useState([]);
+  const [saveBusy, setSaveBusy] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadAnnotations() {
+      setMeasurementMode(false);
+      setUndoStack([]);
+
+      const fromBackend = Array.isArray(job?.annotations) ? job.annotations : null;
+      if (fromBackend) {
+        if (mounted) setAnnotations(fromBackend);
+        return;
+      }
+
+      const local = await loadLocalAnnotations(job?.id);
+      if (mounted) setAnnotations(Array.isArray(local) ? local : []);
+    }
+
+    if (job?.id) {
+      loadAnnotations().catch(() => setAnnotations([]));
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, [job?.id]);
+
+  function handleChangeAnnotations(next) {
+    setAnnotations((prev) => {
+      setUndoStack((stack) => {
+        const trimmed = stack.slice(-50);
+        return [...trimmed, Array.isArray(prev) ? prev : []];
+      });
+      return next;
+    });
+  }
+
+  function handleUndo() {
+    setUndoStack((stack) => {
+      if (!stack.length) return stack;
+      const nextStack = stack.slice(0, -1);
+      const prev = stack[stack.length - 1];
+      setAnnotations(prev);
+      return nextStack;
+    });
+  }
+
+  function handleDeleteSelected(measurementId) {
+    if (!measurementId) return;
+    handleChangeAnnotations((annotations || []).filter((m) => m?.id !== measurementId));
+  }
+
+  async function handleSaveAnnotations() {
+    if (!job?.id) return;
+    try {
+      setSaveBusy(true);
+      await saveLocalAnnotations(job.id, annotations || []);
+      await saveJobAnnotations(job.id, annotations || []);
+    } catch (err) {
+      Alert.alert('Save failed', err.message || 'Unable to save measurements.');
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
   if (job.status === 'processing' || job.status === 'queued') {
     return (
       <Animated.View style={[styles.screen, animatedStyle]}>
@@ -163,15 +234,23 @@ export default function ResultsScreen({
           <View style={styles.outputCard}>
             <View style={styles.planFrame}>
               {job.combined_overlay_url ? (
-                <Image source={{ uri: job.combined_overlay_url }} style={styles.outputImage} resizeMode="contain" />
+                <FloorplanAnnotator
+                  imageUri={job.combined_overlay_url}
+                  theme={theme}
+                  annotations={annotations}
+                  onChangeAnnotations={handleChangeAnnotations}
+                  measurementMode={measurementMode}
+                  onRequestToggleMeasurementMode={() => setMeasurementMode((v) => !v)}
+                  onRequestUndo={handleUndo}
+                  onRequestDeleteSelected={handleDeleteSelected}
+                  onRequestSave={handleSaveAnnotations}
+                  busy={busy || saveBusy}
+                />
               ) : (
                 <View style={styles.outputEmpty}>
                   <Ionicons name="image-outline" size={22} color={theme.colors.softText} />
                 </View>
               )}
-              <View style={styles.zoomPill}>
-                <Text style={styles.zoomText}>Zoom 125%</Text>
-              </View>
             </View>
 
             <View style={styles.actionRow}>
@@ -364,7 +443,7 @@ function createStyles(theme, isLandscape) {
       ...theme.shadow.card,
     },
     planFrame: {
-      height: isLandscape ? 420 : 360,
+      height: isLandscape ? 520 : 620,
       borderRadius: 24,
       backgroundColor: theme.colors.heroTint,
       borderWidth: 1,

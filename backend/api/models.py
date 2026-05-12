@@ -24,6 +24,11 @@ class FloorplanJob(models.Model):
     room_polygons_path = models.CharField(max_length=255, blank=True)
     fused_floorplan_path = models.CharField(max_length=255, blank=True)
 
+    # Client-authored interactive annotations (e.g., measurement dimensions).
+    # Stored in image-render coordinates (relative to the rendered/fit image),
+    # so the frontend can keep them anchored while zooming/panning.
+    annotations = models.JSONField(default=list, blank=True)
+
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

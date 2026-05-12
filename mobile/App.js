@@ -1,6 +1,8 @@
+import 'react-native-gesture-handler';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, BackHandler, Platform, StatusBar, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import BottomTabBar from './src/components/navigation/BottomTabBar';
@@ -309,18 +311,20 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
-        <ExpoStatusBar style="dark" />
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
+          <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
+          <ExpoStatusBar style="dark" />
 
-        <View style={styles.container}>
-          <View style={styles.screenArea}>{renderCurrentScreen()}</View>
+          <View style={styles.container}>
+            <View style={styles.screenArea}>{renderCurrentScreen()}</View>
 
-          {session && !selectedJob ? <BottomTabBar activeTab={activeTab} onSelectTab={handleTabChange} tabs={MAIN_TABS} theme={theme} /> : null}
-        </View>
-      </SafeAreaView>
-    </SafeAreaProvider>
+            {session && !selectedJob ? <BottomTabBar activeTab={activeTab} onSelectTab={handleTabChange} tabs={MAIN_TABS} theme={theme} /> : null}
+          </View>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

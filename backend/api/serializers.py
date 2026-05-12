@@ -22,6 +22,7 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
             'original_filename',
             'original_image',
             'original_image_url',
+            'annotations',
             'door_mask_path',
             'window_mask_path',
             'door_mask_url',
