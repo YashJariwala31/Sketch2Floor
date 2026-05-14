@@ -1,6 +1,6 @@
 # stage3_wall_graph.py
 #
-# Stage 3 – Wall Graph Construction (Closed Topology)
+# Stage 3 ï¿½ Wall Graph Construction (Closed Topology)
 #
 # Build a wall connectivity graph from axis-aligned segments (Stage 2).
 #
@@ -30,7 +30,7 @@ NOISE_THRESHOLD = 50        # Remove components with total edge length below thi
 
 def load_segments(json_path=None):
     if json_path is None:
-        json_path = os.path.join("data", "intermediate", "wall_line_segments.json")
+        json_path = os.path.join(utils.get_intermediate_dir(), "wall_line_segments.json")
     with open(json_path) as f:
         raw = json.load(f)
 
@@ -333,15 +333,15 @@ def get_image_dimensions():
     return utils.get_image_dimensions()
 
 def save_graph(nodes, edges, path=None):
-    if path is None: path = os.path.join("data", "intermediate", "wall_graph.json")
+    if path is None: path = os.path.join(utils.get_intermediate_dir(), "wall_graph.json")
     utils.save_json({"nodes": nodes, "edges": edges}, path)
 
 def visualize(nodes, edges, img_shape, save_dir=None):
-    if save_dir is None: save_dir = os.path.join("data", "intermediate")
+    if save_dir is None: save_dir = utils.get_intermediate_dir()
     h, w = img_shape[:2]
     nmap = {n["id"]: (int(round(n["x"])), int(round(n["y"]))) for n in nodes}
 
-    mp = os.path.join("data", "intermediate", "binary_wall_mask.png")
+    mp = os.path.join(utils.get_intermediate_dir(), "binary_wall_mask.png")
     if os.path.exists(mp):
         mask = cv2.imread(mp, cv2.IMREAD_GRAYSCALE)
         if mask is not None:

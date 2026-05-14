@@ -20,7 +20,10 @@ def main():
     print("Stage 1: Binary Structure Extraction and Edge Stabilization")
     print(f"Loading image from: {image_path}")
 
-    stage0_gray_path = os.path.join("data", "intermediate", "stage0_grayscale.png")
+    from . import utils
+    intermediate_dir = utils.get_intermediate_dir()
+
+    stage0_gray_path = os.path.join(intermediate_dir, "stage0_grayscale.png")
     if os.path.exists(stage0_gray_path):
         print(f"Found Stage 0 grayscale at: {stage0_gray_path}. Using it as input.")
         grayscale_image = cv2.imread(stage0_gray_path, cv2.IMREAD_GRAYSCALE)
@@ -75,11 +78,10 @@ def main():
     print("Step 7: Cleaning up edges...")
     final_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel_rect, iterations=1)
 
-    os.makedirs("data/intermediate", exist_ok=True)
     paths = {
-        "denoised": "data/intermediate/stage1_denoised.png",
-        "binary": "data/intermediate/binary_wall_mask.png",
-        "edges": "data/intermediate/edge_map.png"
+        "denoised": os.path.join(intermediate_dir, "stage1_denoised.png"),
+        "binary": os.path.join(intermediate_dir, "binary_wall_mask.png"),
+        "edges": os.path.join(intermediate_dir, "edge_map.png")
     }
 
     if cv2.imwrite(paths["denoised"], denoised):

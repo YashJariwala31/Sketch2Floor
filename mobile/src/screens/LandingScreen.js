@@ -1,7 +1,8 @@
 import React from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { AuthBackdrop, HeroArtwork } from '../components/auth/AuthVisuals';
 import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 
 export default function LandingScreen({ theme, isLandscape, onLogin, onSignUp }) {
@@ -13,151 +14,89 @@ export default function LandingScreen({ theme, isLandscape, onLogin, onSignUp })
   const styles = createStyles(theme, isLandscape);
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.topBar}>
-        <View style={styles.brandRow}>
-          <View style={styles.logoWrap}>
-            <Ionicons name="sparkles-outline" size={18} color="#ffffff" />
-          </View>
-          <Text style={styles.brand}>Sketch2FloorPlan</Text>
-        </View>
+    <AuthBackdrop theme={theme}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Animated.View style={[styles.shell, animatedStyle]}>
+          <HeroArtwork theme={theme} />
 
-        <View style={styles.navRow}>
-          <Pressable style={styles.ghostButton} onPress={onLogin}>
-            <Text style={styles.ghostButtonText}>Log in</Text>
+          <Text style={styles.title}>Sketch to floor plan, without the messy middle.</Text>
+          <Text style={styles.subtitle}>
+            Clean digital output, measured overlays, and a calmer workflow from the first upload.
+          </Text>
+
+          <Pressable style={styles.primaryButton} onPress={onLogin}>
+            <Text style={styles.primaryButtonText}>Login</Text>
+            <Ionicons name="chevron-forward" size={18} color="#FFFFFF" />
           </Pressable>
-          <Pressable style={styles.primaryButton} onPress={onSignUp}>
-            <Text style={styles.primaryButtonText}>Sign up</Text>
+
+          <Pressable style={styles.secondaryRow} onPress={onSignUp}>
+            <Text style={styles.secondaryText}>Don&apos;t have an account?</Text>
+            <Text style={styles.secondaryLink}>Sign up</Text>
           </Pressable>
-        </View>
-      </View>
-
-      <Animated.View style={[styles.heroWrap, animatedStyle]}>
-        <Text style={styles.heroLine}>
-          <Text style={styles.heroPrimary}>Turn Sketches</Text>
-        </Text>
-        <Text style={styles.heroLine}>
-          <Text style={styles.heroPrimary}>into</Text>
-        </Text>
-        <Text style={styles.heroLine}>
-          <Text style={styles.heroAccent}>Floor Plans </Text>
-          <Text style={styles.heroPrimary}>in</Text>
-        </Text>
-        <Text style={styles.heroLine}>
-          <Text style={styles.heroHighlight}>Seconds</Text>
-        </Text>
-
-        <Text style={styles.heroCopy}>
-          The AI-powered CAD tool for students, designers, and builders. Upload a hand-drawn sketch and turn it into a clean digital plan.
-        </Text>
-      </Animated.View>
-    </View>
+        </Animated.View>
+      </ScrollView>
+    </AuthBackdrop>
   );
 }
 
 function createStyles(theme, isLandscape) {
   return StyleSheet.create({
-    screen: {
-      flex: 1,
-    },
-    topBar: {
-      paddingTop: 8,
-      paddingBottom: 18,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    brandRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      flexShrink: 1,
-    },
-    logoWrap: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
+    content: {
+      flexGrow: 1,
       justifyContent: 'center',
-      backgroundColor: theme.colors.accent,
+      paddingVertical: 28,
     },
-    brand: {
+    shell: {
+      width: '100%',
+      maxWidth: 470,
+      alignSelf: 'center',
+      paddingHorizontal: isLandscape ? 12 : 6,
+    },
+    title: {
       color: theme.colors.text,
-      fontSize: 20,
+      fontSize: isLandscape ? 34 : 31,
+      lineHeight: isLandscape ? 40 : 36,
       fontWeight: '900',
-      letterSpacing: -0.7,
+      textAlign: 'center',
     },
-    navRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    ghostButton: {
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 14,
-    },
-    ghostButtonText: {
-      color: theme.colors.text,
-      fontWeight: '800',
+    subtitle: {
+      marginTop: 16,
+      color: theme.colors.muted,
+      fontSize: 16,
+      lineHeight: 24,
+      textAlign: 'center',
+      paddingHorizontal: 10,
     },
     primaryButton: {
-      paddingHorizontal: 16,
-      paddingVertical: 11,
-      borderRadius: 14,
-      backgroundColor: theme.colors.accent,
+      marginTop: 28,
+      minHeight: 58,
+      borderRadius: 18,
+      backgroundColor: theme.colors.authDark,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingHorizontal: 20,
     },
     primaryButtonText: {
-      color: '#ffffff',
-      fontWeight: '900',
+      color: '#FFFFFF',
+      fontSize: 16,
+      fontWeight: '800',
     },
-    heroWrap: {
-      flex: 1,
-      justifyContent: 'center',
+    secondaryRow: {
+      marginTop: 18,
+      flexDirection: 'row',
       alignItems: 'center',
-      width: '100%',
-      maxWidth: 460,
-      alignSelf: 'center',
-      paddingTop: 20,
-      paddingBottom: 20,
+      justifyContent: 'center',
+      gap: 6,
     },
-    heroLine: {
-      textAlign: 'center',
-      marginBottom: 2,
-    },
-    heroPrimary: {
-      color: theme.colors.text,
-      fontSize: isLandscape ? 46 : 40,
-      fontWeight: '900',
-      letterSpacing: -1.4,
-      lineHeight: isLandscape ? 50 : 44,
-    },
-    heroAccent: {
-      color: '#4d8cff',
-      fontSize: isLandscape ? 46 : 40,
-      fontWeight: '900',
-      letterSpacing: -1.4,
-      lineHeight: isLandscape ? 50 : 44,
-    },
-    heroHighlight: {
-      color: '#2bd0e8',
-      fontSize: isLandscape ? 46 : 40,
-      fontWeight: '900',
-      letterSpacing: -1.4,
-      lineHeight: isLandscape ? 50 : 44,
-    },
-    heroCopy: {
-      marginTop: 22,
+    secondaryText: {
       color: theme.colors.muted,
-      fontSize: 17,
-      lineHeight: 29,
-      textAlign: 'center',
-      width: '100%',
-      maxWidth: 420,
-      paddingHorizontal: 8,
+      fontWeight: '600',
+    },
+    secondaryLink: {
+      color: theme.colors.text,
+      fontWeight: '800',
     },
   });
 }

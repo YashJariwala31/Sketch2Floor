@@ -153,15 +153,15 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
     }
   }
 
-  async function saveResult(url) {
-    if (!url) {
+  async function saveResult(sourceUri) {
+    if (!sourceUri) {
       throw new Error('No generated floor plan available yet.');
     }
 
     try {
       setBusy(true);
       setError('');
-      await saveImageToDevice(url, albumName);
+      await saveImageToDevice(sourceUri, albumName);
       return true;
     } catch (err) {
       const parsed = err.message || 'Unable to prepare download';

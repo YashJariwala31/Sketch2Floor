@@ -40,9 +40,12 @@ def calculate_polygon_area(vertices):
 
 # --- I/O Helpers ---
 
+def get_intermediate_dir():
+    return os.getenv("S2FP_INTERMEDIATE_DIR", os.path.join("data", "intermediate"))
+
 def load_wall_mask(mask_path=None):
     if mask_path is None:
-        mask_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
+        mask_path = os.path.join(get_intermediate_dir(), "binary_wall_mask.png")
     if not os.path.exists(mask_path):
         raise FileNotFoundError(f"Binary wall mask not found: {mask_path}")
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
@@ -70,7 +73,7 @@ def save_json(data, path):
 
 def load_scale_factors():
     try:
-        factors = load_json(os.path.join("data", "intermediate", "scale_factors.json"))
+        factors = load_json(os.path.join(get_intermediate_dir(), "scale_factors.json"))
         return float(factors.get("scale_x", 1.0)), float(factors.get("scale_y", 1.0))
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return 1.0, 1.0

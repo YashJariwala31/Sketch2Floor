@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AuthBackdrop } from '../components/auth/AuthVisuals';
 import JobCard from '../components/JobCard';
 
 const FILTERS = [
@@ -20,53 +21,66 @@ export default function HistoryScreen({ jobs, loading, error, onSelectJob, onDel
   }, [filter, jobs]);
 
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>History</Text>
-      <Text style={styles.subtitle}>Previous conversions</Text>
-
-      <View style={styles.filterRow}>
-        {FILTERS.map((item) => {
-          const active = item.key === filter;
-          return (
-            <Pressable key={item.key} style={[styles.filterPill, active ? styles.filterPillActive : null]} onPress={() => setFilter(item.key)}>
-              <Text style={[styles.filterText, active ? styles.filterTextActive : null]}>{item.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {loading ? <Text style={styles.message}>Loading history...</Text> : null}
-      {error ? <Text style={[styles.message, styles.error]}>{error}</Text> : null}
-
-      {!loading && !error && visibleJobs.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No floor plans yet</Text>
-          <Text style={styles.emptyText}>Your completed scans will appear here.</Text>
+    <AuthBackdrop theme={theme}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.headerBlock}>
+          <Text style={styles.title}>History</Text>
         </View>
-      ) : null}
 
-      {visibleJobs.map((job) => (
-        <JobCard
-          key={job.id}
-          job={job}
-          theme={theme}
-          onPress={() => onSelectJob(job)}
-          onDelete={() =>
-            Alert.alert('Delete project', 'Remove this floorplan project permanently?', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Delete', style: 'destructive', onPress: () => onDeleteJob(job) },
-            ])
-          }
-        />
-      ))}
-    </ScrollView>
+        <View style={styles.filterRow}>
+          {FILTERS.map((item) => {
+            const active = item.key === filter;
+            return (
+              <Pressable key={item.key} style={[styles.filterPill, active ? styles.filterPillActive : null]} onPress={() => setFilter(item.key)}>
+                <Text style={[styles.filterText, active ? styles.filterTextActive : null]}>{item.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {loading ? <Text style={styles.message}>Loading history...</Text> : null}
+        {error ? <Text style={[styles.message, styles.error]}>{error}</Text> : null}
+
+        {!loading && !error && visibleJobs.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No floor plans yet</Text>
+            <Text style={styles.emptyText}>Your completed scans will appear here.</Text>
+          </View>
+        ) : null}
+
+        {visibleJobs.map((job) => (
+          <JobCard
+            key={job.id}
+            job={job}
+            theme={theme}
+            onPress={() => onSelectJob(job)}
+            onDelete={() =>
+              Alert.alert('Delete project', 'Remove this floorplan project permanently?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: () => onDeleteJob(job) },
+              ])
+            }
+          />
+        ))}
+      </ScrollView>
+    </AuthBackdrop>
   );
 }
 
 function createStyles(theme, isLandscape) {
   return StyleSheet.create({
     content: {
+      flexGrow: 1,
       paddingBottom: 30,
+    },
+    headerBlock: {
+      marginBottom: 18,
+    },
+    eyebrow: {
+      color: theme.colors.muted,
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 8,
     },
     title: {
       color: theme.colors.text,
@@ -89,13 +103,13 @@ function createStyles(theme, isLandscape) {
       paddingHorizontal: 14,
       paddingVertical: 9,
       borderRadius: 999,
-      backgroundColor: theme.colors.surfaceElevated,
+      backgroundColor: theme.colors.surface,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: theme.colors.authInputBorder,
     },
     filterPillActive: {
-      backgroundColor: theme.colors.heroTint,
-      borderColor: theme.colors.noticeBorder,
+      backgroundColor: theme.colors.authDark,
+      borderColor: theme.colors.authDark,
     },
     filterText: {
       color: theme.colors.muted,
@@ -103,7 +117,7 @@ function createStyles(theme, isLandscape) {
       fontSize: 13,
     },
     filterTextActive: {
-      color: theme.colors.accent,
+      color: '#FFFFFF',
     },
     message: {
       color: theme.colors.muted,
@@ -115,14 +129,14 @@ function createStyles(theme, isLandscape) {
     },
     emptyState: {
       minHeight: 220,
-      borderRadius: 24,
-      backgroundColor: theme.colors.surfaceElevated,
+      borderRadius: 30,
+      backgroundColor: theme.colors.surface,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: 'rgba(255,255,255,0.72)',
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 22,
-      ...theme.shadow.soft,
+      ...theme.shadow.card,
     },
     emptyTitle: {
       color: theme.colors.text,

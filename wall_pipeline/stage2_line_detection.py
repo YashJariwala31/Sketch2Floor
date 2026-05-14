@@ -16,7 +16,7 @@ import math
 import numpy as np
 import cv2
 from collections import defaultdict
-from .utils import compute_length, compute_angle_deg, orientation_label
+from .utils import compute_length, compute_angle_deg, orientation_label, get_intermediate_dir
 
 
 # ---------------------------------------------------------------------------
@@ -29,9 +29,9 @@ from .utils import compute_length, compute_angle_deg, orientation_label
 
 def load_inputs(edge_path=None, binary_path=None):
     if edge_path is None:
-        edge_path = os.path.join("data", "intermediate", "edge_map.png")
+        edge_path = os.path.join(get_intermediate_dir(), "edge_map.png")
     if binary_path is None:
-        binary_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
+        binary_path = os.path.join(get_intermediate_dir(), "binary_wall_mask.png")
 
     edges = None
     if os.path.exists(edge_path):
@@ -454,7 +454,7 @@ def build_output(merged):
 
 def save_outputs(segments, save_dir=None):
     if save_dir is None:
-        save_dir = os.path.join("data", "intermediate")
+        save_dir = get_intermediate_dir()
     os.makedirs(save_dir, exist_ok=True)
     json_path = os.path.join(save_dir, "wall_line_segments.json")
     with open(json_path, "w", encoding="utf-8") as f:
@@ -465,7 +465,7 @@ def save_outputs(segments, save_dir=None):
 def visualize_segments(segments, shape, save_dir=None):
     """Draw segments on black canvas + on dim wall mask."""
     if save_dir is None:
-        save_dir = os.path.join("data", "intermediate")
+        save_dir = get_intermediate_dir()
     os.makedirs(save_dir, exist_ok=True)
 
     def _draw(canvas):
@@ -487,7 +487,7 @@ def visualize_segments(segments, shape, save_dir=None):
     print(f"Overlay saved to: {out_path}")
 
     # Wall mask background
-    mask_path = os.path.join("data", "intermediate", "binary_wall_mask.png")
+    mask_path = os.path.join(get_intermediate_dir(), "binary_wall_mask.png")
     if os.path.exists(mask_path):
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         if mask is not None:

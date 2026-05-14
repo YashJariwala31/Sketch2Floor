@@ -1,13 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
-import {
-  LongPressGestureHandler,
-  PanGestureHandler,
-  PinchGestureHandler,
-  State,
-  TapGestureHandler,
-} from 'react-native-gesture-handler';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import ViewShot from 'react-native-view-shot';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -23,31 +18,45 @@ function midpoint(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-function unitNormal(a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
+function intelligentNormal(p1, p2, center) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  // Perpendicular vector
-  return { x: -dy / len, y: dx / len };
+  const nx = -dy / len;
+  const ny = dx / len;
+
+  const mid = midpoint(p1, p2);
+  const toMidX = mid.x - center.x;
+  const toMidY = mid.y - center.y;
+
+  if (nx * toMidX + ny * toMidY < 0) {
+    return { x: -nx, y: -ny };
+  }
+  return { x: nx, y: ny };
 }
 
-function arrowHeadPath(end, direction, size = 10, spread = 0.55) {
-  // direction: normalized vector pointing ALONG the dimension line (from start->end)
-  const dx = direction.x;
-  const dy = direction.y;
-  const bx = end.x - dx * size;
-  const by = end.y - dy * size;
+function architecturalTickPath(point, dir, size = 6) {
+  const cos45 = Math.cos(Math.PI / 4);
+  const sin45 = Math.sin(Math.PI / 4);
+  const tx = dir.x * cos45 - dir.y * sin45;
+  const ty = dir.x * sin45 + dir.y * cos45;
 
-  // perpendicular
-  const px = -dy;
-  const py = dx;
+  const x1 = point.x + tx * size;
+  const y1 = point.y + ty * size;
+  const x2 = point.x - tx * size;
+  const y2 = point.y - ty * size;
 
-  const l1x = bx + px * size * spread;
-  const l1y = by + py * size * spread;
-  const l2x = bx - px * size * spread;
-  const l2y = by - py * size * spread;
+  return `M ${x1} ${y1} L ${x2} ${y2}`;
+}
 
-  return `M ${end.x} ${end.y} L ${l1x} ${l1y} L ${l2x} ${l2y} Z`;
+function distanceToSegment(point, start, end) {
+  const vx = end.x - start.x;
+  const vy = end.y - start.y;
+  const denom = vx * vx + vy * vy;
+  const t = denom > 1e-6 ? clamp(((point.x - start.x) * vx + (point.y - start.y) * vy) / denom, 0, 1) : 0;
+  const projx = start.x + t * vx;
+  const projy = start.y + t * vy;
+  return Math.hypot(point.x - projx, point.y - projy);
 }
 
 function defaultMeasurementText(measurement, pixelsPerUnit = 1) {
@@ -57,66 +66,63 @@ function defaultMeasurementText(measurement, pixelsPerUnit = 1) {
 }
 
 function makeLinearMeasurement(p1, p2) {
-  const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  const normal = unitNormal(p1, p2);
-  const offset = 18; // image-space px
-  const mid = midpoint(p1, p2);
-  const label = { x: mid.x + normal.x * (offset + 10), y: mid.y + normal.y * (offset + 10) };
-
   return {
-    id,
+    id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     type: 'linear',
     p1,
     p2,
-    offset,
-    label,
     textOverride: '',
     createdAt: new Date().toISOString(),
   };
 }
 
-function hitTestMeasurement(measurement, point, thresholdPx = 18) {
+function hitTestMeasurement(measurement, point, center, thresholdPx = 18) {
   if (!measurement) return null;
   const p1 = measurement.p1;
   const p2 = measurement.p2;
-  const label = measurement.label;
 
   if (dist(point, p1) <= thresholdPx) return { part: 'p1' };
   if (dist(point, p2) <= thresholdPx) return { part: 'p2' };
-  if (label && dist(point, label) <= thresholdPx * 1.1) return { part: 'label' };
 
-  // Distance-to-segment for selecting line
-  const ax = p1.x;
-  const ay = p1.y;
-  const bx = p2.x;
-  const by = p2.y;
-  const px = point.x;
-  const py = point.y;
-  const vx = bx - ax;
-  const vy = by - ay;
-  const denom = vx * vx + vy * vy;
-  const t = denom > 1e-6 ? clamp(((px - ax) * vx + (py - ay) * vy) / denom, 0, 1) : 0;
-  const projx = ax + t * vx;
-  const projy = ay + t * vy;
-  const d = Math.hypot(px - projx, py - projy);
-  if (d <= thresholdPx) return { part: 'line' };
+  const normal = intelligentNormal(p1, p2, center);
+  const offset = 36;
+  const d1 = { x: p1.x + normal.x * offset, y: p1.y + normal.y * offset };
+  const d2 = { x: p2.x + normal.x * offset, y: p2.y + normal.y * offset };
+
+  if (distanceToSegment(point, d1, d2) <= thresholdPx) return { part: 'line' };
+  if (distanceToSegment(point, p1, p2) <= thresholdPx) return { part: 'line' };
 
   return null;
 }
 
+function scaleMeasurement(measurement, scaleFactor) {
+  return {
+    ...measurement,
+    p1: measurement?.p1
+      ? { x: measurement.p1.x * scaleFactor, y: measurement.p1.y * scaleFactor }
+      : measurement?.p1,
+    p2: measurement?.p2
+      ? { x: measurement.p2.x * scaleFactor, y: measurement.p2.y * scaleFactor }
+      : measurement?.p2,
+  };
+}
+
 function LabelEditModal({ visible, initialValue, onCancel, onSave, theme }) {
   const [value, setValue] = useState(initialValue || '');
+  const s = useMemo(() => styles(theme), [theme]);
 
   useEffect(() => {
-    if (visible) setValue(initialValue || '');
+    if (visible) {
+      setValue(initialValue || '');
+    }
   }, [visible, initialValue]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={styles(theme).modalBackdrop}>
-        <View style={styles(theme).modalCard}>
-          <Text style={styles(theme).modalTitle}>Edit measurement</Text>
-          <Text style={styles(theme).modalHint}>Example: 5.00, 2.50, Ø1.00</Text>
+      <View style={s.modalBackdrop}>
+        <View style={s.modalCard}>
+          <Text style={s.modalTitle}>Edit measurement</Text>
+          <Text style={s.modalHint}>Enter a custom label like 5.00 or 2.50.</Text>
           <TextInput
             value={value}
             onChangeText={setValue}
@@ -124,14 +130,14 @@ function LabelEditModal({ visible, initialValue, onCancel, onSave, theme }) {
             placeholderTextColor={theme.colors.softText}
             autoCapitalize="none"
             autoCorrect={false}
-            style={styles(theme).modalInput}
+            style={s.modalInput}
           />
-          <View style={styles(theme).modalRow}>
-            <Pressable style={[styles(theme).pillButton, styles(theme).pillSecondary]} onPress={onCancel}>
-              <Text style={styles(theme).pillSecondaryText}>Cancel</Text>
+          <View style={s.modalRow}>
+            <Pressable style={[s.pillButton, s.pillSecondary]} onPress={onCancel}>
+              <Text style={s.pillSecondaryText}>Cancel</Text>
             </Pressable>
-            <Pressable style={[styles(theme).pillButton, styles(theme).pillPrimary]} onPress={() => onSave(value)}>
-              <Text style={styles(theme).pillPrimaryText}>Save</Text>
+            <Pressable style={[s.pillButton, s.pillPrimary]} onPress={() => onSave(value)}>
+              <Text style={s.pillPrimaryText}>Save</Text>
             </Pressable>
           </View>
         </View>
@@ -140,7 +146,54 @@ function LabelEditModal({ visible, initialValue, onCancel, onSave, theme }) {
   );
 }
 
-export default function FloorplanAnnotator({
+function EditorToolbar({
+  measurementMode,
+  onRequestToggleMeasurementMode,
+  onRequestUndo,
+  onRequestDeleteSelected,
+  onRequestEditSelected,
+  onRequestSave,
+  busy,
+  selectedMeasurement,
+  theme,
+}) {
+  const s = useMemo(() => styles(theme), [theme]);
+  const statusText = measurementMode
+    ? selectedMeasurement
+      ? 'Drag to adjust the selected measurement.'
+      : ''
+    : 'Preview mode.';
+
+  return (
+    <View style={s.toolbarCard}>
+      <View style={s.toolbarRow}>
+        <Pressable style={[s.pillButton, measurementMode ? s.pillPrimary : s.pillSecondary]} onPress={onRequestToggleMeasurementMode}>
+          <Text style={measurementMode ? s.pillPrimaryText : s.pillSecondaryText}>{measurementMode ? 'Measure On' : 'Measure'}</Text>
+        </Pressable>
+        <Pressable style={[s.pillButton, s.pillSecondary]} onPress={onRequestUndo}>
+          <Text style={s.pillSecondaryText}>Undo</Text>
+        </Pressable>
+        {selectedMeasurement ? (
+          <>
+            <Pressable style={[s.pillButton, s.pillSecondary]} onPress={onRequestEditSelected}>
+              <Text style={s.pillSecondaryText}>Label</Text>
+            </Pressable>
+            <Pressable style={[s.pillButton, s.pillSecondary]} onPress={() => onRequestDeleteSelected?.(selectedMeasurement?.id || null)}>
+              <Text style={s.pillSecondaryText}>Delete</Text>
+            </Pressable>
+          </>
+        ) : null}
+        <Pressable style={[s.pillButton, s.pillPrimary]} onPress={onRequestSave} disabled={busy}>
+          <Text style={[s.pillPrimaryText, busy ? s.disabledPrimaryText : null]}>{busy ? 'Saving...' : 'Save'}</Text>
+        </Pressable>
+      </View>
+
+      <Text style={s.toolbarHint}>{statusText}</Text>
+    </View>
+  );
+}
+
+const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
   imageUri,
   theme,
   annotations,
@@ -150,28 +203,28 @@ export default function FloorplanAnnotator({
   onRequestUndo,
   onRequestDeleteSelected,
   onRequestSave,
+  onRequestHistoryCheckpoint,
   busy,
   pixelsPerUnit = 1,
-}) {
+}, ref) {
   const s = useMemo(() => styles(theme), [theme]);
-
   const [layout, setLayout] = useState({ w: 1, h: 1 });
   const [naturalSize, setNaturalSize] = useState(null);
   const [pendingStartPoint, setPendingStartPoint] = useState(null);
+  const [pendingCurrentPoint, setPendingCurrentPoint] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [editModal, setEditModal] = useState({ open: false, id: null });
 
-  // Zoom/pan state (JS-driven, stable in Expo)
   const scale = useRef(1);
   const lastScale = useRef(1);
   const translate = useRef({ x: 0, y: 0 });
   const lastTranslate = useRef({ x: 0, y: 0 });
+  const activeDrag = useRef(null);
 
   const animatedScale = useRef(new Animated.Value(1)).current;
   const animatedTranslateX = useRef(new Animated.Value(0)).current;
   const animatedTranslateY = useRef(new Animated.Value(0)).current;
-
-  const activeDrag = useRef(null); // { id, part, startPointImage, startMeasurement, startTranslate }
+  const exportShotRef = useRef(null);
 
   useEffect(() => {
     if (!imageUri) return;
@@ -195,17 +248,34 @@ export default function FloorplanAnnotator({
     return { x, y, w, h };
   }, [layout, naturalSize]);
 
-  function screenToImagePoint(evt) {
-    const { x, y } = evt.nativeEvent;
-    // Convert screen point into image-space point (relative to fitted image top-left)
-    const localX = x - fitted.x;
-    const localY = y - fitted.y;
+  const exportScale = useMemo(() => {
+    if (!fitted.w || !naturalSize?.w) {
+      return 1;
+    }
+    return naturalSize.w / fitted.w;
+  }, [fitted.w, naturalSize?.w]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      async captureAnnotatedImage() {
+        if (!exportShotRef.current?.capture) {
+          throw new Error('Preview is not ready to export yet.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return exportShotRef.current.capture();
+      },
+    }),
+    []
+  );
+
+  function screenToImagePoint(evtX, evtY) {
+    const localX = evtX - fitted.x;
+    const localY = evtY - fitted.y;
     const tx = translate.current.x;
     const ty = translate.current.y;
     const sc = scale.current || 1;
-    const imgX = (localX - tx) / sc;
-    const imgY = (localY - ty) / sc;
-    return { x: imgX, y: imgY };
+    return { x: (localX - tx) / sc, y: (localY - ty) / sc };
   }
 
   function applyTransform(nextTranslate, nextScale) {
@@ -216,157 +286,212 @@ export default function FloorplanAnnotator({
     animatedScale.setValue(nextScale);
   }
 
-  function resetPendingIfNeeded() {
+  useEffect(() => {
     if (!measurementMode) {
       setPendingStartPoint(null);
+      setPendingCurrentPoint(null);
     }
-  }
+  }, [measurementMode]);
 
-  useEffect(() => resetPendingIfNeeded(), [measurementMode]);
+  useEffect(() => {
+    if (selectedId && !(annotations || []).some((item) => item?.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [annotations, selectedId]);
 
-  function updateMeasurement(id, partial) {
-    const next = (annotations || []).map((m) => (m.id === id ? { ...m, ...partial } : m));
-    onChangeAnnotations(next);
+  function updateMeasurement(id, partial, options = {}) {
+    const next = (annotations || []).map((item) => (item.id === id ? { ...item, ...partial } : item));
+    onChangeAnnotations(next, options);
   }
 
   function addMeasurement(measurement) {
     const next = [...(annotations || []), measurement];
-    onChangeAnnotations(next);
+    onChangeAnnotations(next, { trackHistory: true });
     setSelectedId(measurement.id);
   }
 
-  function handleTap(evt) {
-    if (!measurementMode) return;
+  const tap = useMemo(() => {
+    return Gesture.Tap()
+      .maxDistance(12)
+      .runOnJS(true)
+      .onEnd((event) => {
+        if (!measurementMode) return;
+        const point = screenToImagePoint(event.x, event.y);
+        const center = { x: fitted.w / 2, y: fitted.h / 2 };
+        const hit = (annotations || [])
+          .map((item) => ({ item, hit: hitTestMeasurement(item, point, center) }))
+          .find((candidate) => candidate.hit);
 
-    const point = screenToImagePoint(evt);
-    if (point.x < 0 || point.y < 0 || point.x > fitted.w || point.y > fitted.h) return;
+        if (hit) {
+          setSelectedId(hit.item.id);
+          setPendingStartPoint(null);
+          setPendingCurrentPoint(null);
+          return;
+        }
 
-    // If tapping on an existing measurement, just select it.
-    const hit = (annotations || [])
-      .map((m) => ({ m, hit: hitTestMeasurement(m, point) }))
-      .find((item) => item.hit);
-    if (hit) {
-      setSelectedId(hit.m.id);
-      setPendingStartPoint(null);
-      return;
-    }
+        if (!pendingStartPoint) {
+          setPendingStartPoint(point);
+          setSelectedId(null);
+          return;
+        }
 
-    if (!pendingStartPoint) {
-      setPendingStartPoint(point);
-      setSelectedId(null);
-      return;
-    }
+        if (dist(pendingStartPoint, point) > 6) {
+          addMeasurement(makeLinearMeasurement(pendingStartPoint, point));
+        }
 
-    if (dist(pendingStartPoint, point) < 6) {
-      // Ignore ultra-short measurements.
-      setPendingStartPoint(null);
-      return;
-    }
+        setPendingStartPoint(null);
+        setPendingCurrentPoint(null);
+      });
+  }, [measurementMode, annotations, pendingStartPoint, fitted]);
 
-    addMeasurement(makeLinearMeasurement(pendingStartPoint, point));
-    setPendingStartPoint(null);
-  }
+  const longPress = useMemo(() => {
+    return Gesture.LongPress()
+      .minDuration(420)
+      .runOnJS(true)
+      .onStart((event) => {
+        if (!measurementMode) return;
+        const point = screenToImagePoint(event.x, event.y);
+        const center = { x: fitted.w / 2, y: fitted.h / 2 };
+        const hit = (annotations || [])
+          .map((item) => ({ item, hit: hitTestMeasurement(item, point, center) }))
+          .find((candidate) => candidate.hit);
+        if (hit) {
+          setSelectedId(hit.item.id);
+          setEditModal({ open: true, id: hit.item.id });
+        }
+      });
+  }, [measurementMode, annotations, fitted]);
 
-  function handleLongPress(evt) {
-    if (!measurementMode) return;
-    const point = screenToImagePoint(evt);
-    const hit = (annotations || [])
-      .map((m) => ({ m, hit: hitTestMeasurement(m, point) }))
-      .find((item) => item.hit);
-    if (!hit) return;
-    setSelectedId(hit.m.id);
-    setEditModal({ open: true, id: hit.m.id });
-  }
+  const pan = useMemo(() => {
+    return Gesture.Pan()
+      .minDistance(3)
+      .maxPointers(1)
+      .runOnJS(true)
+      .onStart((event) => {
+        const startPoint = screenToImagePoint(event.x, event.y);
 
-  function onPanStateChange(evt) {
-    const { state } = evt.nativeEvent;
-    if (state === State.BEGAN) {
-      const startPoint = screenToImagePoint(evt);
-      const candidates = (annotations || [])
-        .map((m) => ({ m, hit: hitTestMeasurement(m, startPoint) }))
-        .filter((x) => Boolean(x.hit));
+        if (measurementMode) {
+          const center = { x: fitted.w / 2, y: fitted.h / 2 };
+          const hit = (annotations || [])
+            .map((item) => ({ item, hit: hitTestMeasurement(item, startPoint, center) }))
+            .find((candidate) => candidate.hit);
 
-      if (measurementMode && candidates.length > 0) {
-        const target = candidates[0];
+          if (hit) {
+            onRequestHistoryCheckpoint?.(annotations || []);
+            activeDrag.current = {
+              id: hit.item.id,
+              part: hit.hit.part,
+              startMeasurement: {
+                ...hit.item,
+                p1: { ...hit.item.p1 },
+                p2: { ...hit.item.p2 },
+              },
+            };
+            setSelectedId(hit.item.id);
+            return;
+          }
+
+          if (pendingStartPoint) {
+            activeDrag.current = { part: 'draw_preview' };
+            setPendingCurrentPoint(startPoint);
+            return;
+          }
+        }
+
         activeDrag.current = {
-          id: target.m.id,
-          part: target.hit.part,
-          startPointImage: startPoint,
-          startMeasurement: target.m,
+          part: 'pan',
+          startTranslate: { ...translate.current },
         };
-        setSelectedId(target.m.id);
-        return;
-      }
+      })
+      .onUpdate((event) => {
+        const drag = activeDrag.current;
+        if (!drag) return;
 
-      activeDrag.current = {
-        id: null,
-        part: 'pan',
-        startPointImage: startPoint,
-        startTranslate: { ...translate.current },
-      };
-      setSelectedId((prev) => prev);
-      return;
-    }
+        if (drag.part === 'pan') {
+          const startTranslate = drag.startTranslate || lastTranslate.current;
+          applyTransform(
+            { x: startTranslate.x + event.translationX, y: startTranslate.y + event.translationY },
+            scale.current
+          );
+          return;
+        }
 
-    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
-      lastTranslate.current = { ...translate.current };
-      lastScale.current = scale.current;
-      activeDrag.current = null;
-    }
-  }
+        if (drag.part === 'draw_preview') {
+          setPendingCurrentPoint(screenToImagePoint(event.x, event.y));
+          return;
+        }
 
-  function onPanGestureEvent(evt) {
-    const { translationX, translationY } = evt.nativeEvent;
-    const drag = activeDrag.current;
+        if (drag.id && drag.startMeasurement) {
+          const sc = scale.current || 1;
+          const dx = event.translationX / sc;
+          const dy = event.translationY / sc;
+          const base = drag.startMeasurement;
 
-    if (drag?.part === 'pan') {
-      const startT = drag.startTranslate || lastTranslate.current;
-      const nextT = { x: startT.x + translationX, y: startT.y + translationY };
-      applyTransform(nextT, scale.current);
-      return;
-    }
+          if (drag.part === 'p1') {
+            updateMeasurement(drag.id, { p1: { x: base.p1.x + dx, y: base.p1.y + dy } }, { trackHistory: false });
+          } else if (drag.part === 'p2') {
+            updateMeasurement(drag.id, { p2: { x: base.p2.x + dx, y: base.p2.y + dy } }, { trackHistory: false });
+          } else if (drag.part === 'line') {
+            updateMeasurement(
+              drag.id,
+              {
+                p1: { x: base.p1.x + dx, y: base.p1.y + dy },
+                p2: { x: base.p2.x + dx, y: base.p2.y + dy },
+              },
+              { trackHistory: false }
+            );
+          }
+        }
+      })
+      .onEnd((event) => {
+        const drag = activeDrag.current;
+        if (drag?.part === 'pan') {
+          lastTranslate.current = { ...translate.current };
+        } else if (drag?.part === 'draw_preview') {
+          const endPoint = screenToImagePoint(event.x, event.y);
+          if (pendingStartPoint && dist(pendingStartPoint, endPoint) > 6) {
+            addMeasurement(makeLinearMeasurement(pendingStartPoint, endPoint));
+          }
+          setPendingStartPoint(null);
+          setPendingCurrentPoint(null);
+        }
+        activeDrag.current = null;
+      });
+  }, [measurementMode, annotations, pendingStartPoint, fitted]);
 
-    if (drag?.id && (drag.part === 'p1' || drag.part === 'p2' || drag.part === 'label')) {
-      const sc = scale.current || 1;
-      const dx = translationX / sc;
-      const dy = translationY / sc;
-      const base = drag.startMeasurement;
-      if (!base) return;
+  const pinch = useMemo(() => {
+    return Gesture.Pinch()
+      .runOnJS(true)
+      .onUpdate((event) => {
+        const nextScale = clamp(lastScale.current * event.scale, 0.6, 6);
+        applyTransform(translate.current, nextScale);
+      })
+      .onEnd(() => {
+        lastScale.current = scale.current;
+      });
+  }, []);
 
-      if (drag.part === 'p1') {
-        updateMeasurement(drag.id, { p1: { x: base.p1.x + dx, y: base.p1.y + dy } });
-      } else if (drag.part === 'p2') {
-        updateMeasurement(drag.id, { p2: { x: base.p2.x + dx, y: base.p2.y + dy } });
-      } else if (drag.part === 'label') {
-        updateMeasurement(drag.id, { label: { x: base.label.x + dx, y: base.label.y + dy } });
-      }
-    }
-  }
-
-  function onPinchStateChange(evt) {
-    const { state } = evt.nativeEvent;
-    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
-      lastScale.current = scale.current;
-    }
-  }
-
-  function onPinchGestureEvent(evt) {
-    // scale factor is relative to start of gesture
-    const next = clamp(lastScale.current * (evt.nativeEvent.scale || 1), 0.6, 6);
-    applyTransform(translate.current, next);
-  }
+  const composedGesture = useMemo(() => {
+    const canvasInteraction = Gesture.Simultaneous(pan, pinch);
+    return Gesture.Exclusive(canvasInteraction, tap, longPress);
+  }, [pan, pinch, tap, longPress]);
 
   const renderedMeasurements = useMemo(() => {
     const list = Array.isArray(annotations) ? annotations : [];
-    return list.filter((m) => m && m.type === 'linear' && m.p1 && m.p2);
+    return list.filter((item) => item && item.type === 'linear' && item.p1 && item.p2);
   }, [annotations]);
 
-  function renderMeasurement(m) {
-    const p1 = m.p1;
-    const p2 = m.p2;
-    const normal = unitNormal(p1, p2);
-    const offset = typeof m.offset === 'number' ? m.offset : 18;
+  const exportMeasurements = useMemo(
+    () => renderedMeasurements.map((measurement) => scaleMeasurement(measurement, exportScale)),
+    [renderedMeasurements, exportScale]
+  );
 
+  function renderMeasurement(measurement, renderWidth = fitted.w, renderHeight = fitted.h, isExport = false) {
+    const p1 = measurement.p1;
+    const p2 = measurement.p2;
+    const center = { x: renderWidth / 2, y: renderHeight / 2 };
+    const normal = intelligentNormal(p1, p2, center);
+    const offset = 36;
     const d1 = { x: p1.x + normal.x * offset, y: p1.y + normal.y * offset };
     const d2 = { x: p2.x + normal.x * offset, y: p2.y + normal.y * offset };
 
@@ -375,45 +500,56 @@ export default function FloorplanAnnotator({
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const dir = { x: dx / len, y: dy / len };
 
-    const isSelected = selectedId === m.id;
-    const stroke = isSelected ? theme.colors.accent : '#111111';
-    const helper = isSelected ? theme.colors.accentSoft : 'transparent';
+    const extGap = 6;
+    const extOvershoot = 8;
+    const e1Start = { x: p1.x + normal.x * extGap, y: p1.y + normal.y * extGap };
+    const e1End = { x: d1.x + normal.x * extOvershoot, y: d1.y + normal.y * extOvershoot };
+    const e2Start = { x: p2.x + normal.x * extGap, y: p2.y + normal.y * extGap };
+    const e2End = { x: d2.x + normal.x * extOvershoot, y: d2.y + normal.y * extOvershoot };
 
-    const label = m.label || midpoint(d1, d2);
-    const text = (m.textOverride || '').trim() || defaultMeasurementText(m, pixelsPerUnit);
+    const isSelected = !isExport && selectedId === measurement.id;
+    const stroke = isSelected ? theme.colors.accent : theme.colors.text;
+    const helper = isSelected ? theme.colors.accentSoft : 'transparent';
+    const strokeWidth = 1.5;
+    const mid = midpoint(d1, d2);
+    const text = (measurement.textOverride || '').trim() || defaultMeasurementText(measurement, pixelsPerUnit);
+
+    let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    if (angle > 90 || angle < -90) {
+      angle += 180;
+    }
+
+    const textWidth = text.length * 9 + 14;
+    const textHeight = 22;
 
     return (
-      <G key={m.id}>
-        {/* selection halo */}
-        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={helper} strokeWidth={12} strokeLinecap="round" />
-
-        {/* extension lines */}
-        <Line x1={p1.x} y1={p1.y} x2={d1.x} y2={d1.y} stroke={stroke} strokeWidth={2} />
-        <Line x1={p2.x} y1={p2.y} x2={d2.x} y2={d2.y} stroke={stroke} strokeWidth={2} />
-
-        {/* dimension line */}
-        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={stroke} strokeWidth={2.2} />
-
-        {/* arrowheads */}
-        <Path d={arrowHeadPath(d1, { x: -dir.x, y: -dir.y }, 10)} fill={stroke} />
-        <Path d={arrowHeadPath(d2, dir, 10)} fill={stroke} />
-
-        {/* endpoint handles */}
-        <Circle cx={p1.x} cy={p1.y} r={6} fill={theme.colors.surface} stroke={stroke} strokeWidth={2} />
-        <Circle cx={p2.x} cy={p2.y} r={6} fill={theme.colors.surface} stroke={stroke} strokeWidth={2} />
-
-        {/* label handle */}
-        <Circle cx={label.x} cy={label.y} r={7} fill={theme.colors.surface} stroke={stroke} strokeWidth={2} />
-
-        {/* label text */}
+      <G key={measurement.id}>
+        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={helper} strokeWidth={16} strokeLinecap="round" />
+        <Line x1={e1Start.x} y1={e1Start.y} x2={e1End.x} y2={e1End.y} stroke={stroke} strokeWidth={strokeWidth} opacity={0.6} />
+        <Line x1={e2Start.x} y1={e2Start.y} x2={e2End.x} y2={e2End.y} stroke={stroke} strokeWidth={strokeWidth} opacity={0.6} />
+        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={stroke} strokeWidth={strokeWidth} />
+        <Path d={architecturalTickPath(d1, dir, 5)} stroke={stroke} strokeWidth={2} strokeLinecap="round" />
+        <Path d={architecturalTickPath(d2, dir, 5)} stroke={stroke} strokeWidth={2} strokeLinecap="round" />
+        <Circle cx={p1.x} cy={p1.y} r={isSelected ? 6 : 4} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2 : 1.5} />
+        <Circle cx={p2.x} cy={p2.y} r={isSelected ? 6 : 4} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2 : 1.5} />
+        <Rect
+          x={mid.x - textWidth / 2}
+          y={mid.y - textHeight / 2}
+          width={textWidth}
+          height={textHeight}
+          rx={5}
+          fill={theme.colors.surface}
+          transform={`rotate(${angle}, ${mid.x}, ${mid.y})`}
+        />
         <SvgText
-          x={label.x}
-          y={label.y - 12}
+          x={mid.x}
+          y={mid.y + 1}
           fill={stroke}
-          fontSize={16}
+          fontSize={13}
           fontWeight="700"
           textAnchor="middle"
           alignmentBaseline="central"
+          transform={`rotate(${angle}, ${mid.x}, ${mid.y})`}
         >
           {text}
         </SvgText>
@@ -421,94 +557,85 @@ export default function FloorplanAnnotator({
     );
   }
 
-  const selectedMeasurement = renderedMeasurements.find((m) => m.id === selectedId) || null;
+  const selectedMeasurement = renderedMeasurements.find((item) => item.id === selectedId) || null;
 
   return (
-    <View style={s.root} onLayout={(e) => setLayout({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
-      {/* Toolbar */}
-      <View style={s.toolbar}>
-        <Pressable style={[s.pillButton, measurementMode ? s.pillPrimary : s.pillSecondary]} onPress={onRequestToggleMeasurementMode}>
-          <Text style={measurementMode ? s.pillPrimaryText : s.pillSecondaryText}>{measurementMode ? 'Measuring' : 'Measure'}</Text>
-        </Pressable>
-        <Pressable style={[s.pillButton, s.pillSecondary]} onPress={onRequestUndo}>
-          <Text style={s.pillSecondaryText}>Undo</Text>
-        </Pressable>
-        <Pressable
-          style={[s.pillButton, s.pillSecondary]}
-          onPress={() => onRequestDeleteSelected?.(selectedMeasurement?.id || null)}
-          disabled={!selectedMeasurement}
-        >
-          <Text style={[s.pillSecondaryText, !selectedMeasurement ? { opacity: 0.35 } : null]}>Delete</Text>
-        </Pressable>
-        <Pressable style={[s.pillButton, s.pillPrimary]} onPress={onRequestSave} disabled={busy}>
-          <Text style={[s.pillPrimaryText, busy ? { opacity: 0.7 } : null]}>{busy ? 'Saving…' : 'Save'}</Text>
-        </Pressable>
-      </View>
+    <View style={s.root} onLayout={(event) => setLayout({ w: event.nativeEvent.layout.width, h: event.nativeEvent.layout.height })}>
+      {imageUri && naturalSize ? (
+        <View style={s.exportSurface}>
+          <ViewShot ref={exportShotRef} options={{ format: 'png', quality: 1, result: 'tmpfile' }}>
+            <View style={{ width: naturalSize.w, height: naturalSize.h, backgroundColor: theme.colors.surface }}>
+              <Image source={{ uri: imageUri }} style={{ width: naturalSize.w, height: naturalSize.h }} resizeMode="stretch" />
+              <Svg width={naturalSize.w} height={naturalSize.h} style={StyleSheet.absoluteFill}>
+                <Rect x={0} y={0} width={naturalSize.w} height={naturalSize.h} fill="transparent" />
+                {exportMeasurements.map((measurement) => renderMeasurement(measurement, naturalSize.w, naturalSize.h, true))}
+              </Svg>
+            </View>
+          </ViewShot>
+        </View>
+      ) : null}
 
-      {/* hint */}
+      <EditorToolbar
+        measurementMode={measurementMode}
+        onRequestToggleMeasurementMode={onRequestToggleMeasurementMode}
+        onRequestUndo={onRequestUndo}
+        onRequestDeleteSelected={onRequestDeleteSelected}
+        onRequestEditSelected={() => selectedMeasurement && setEditModal({ open: true, id: selectedMeasurement.id })}
+        onRequestSave={onRequestSave}
+        busy={busy}
+        selectedMeasurement={selectedMeasurement}
+        theme={theme}
+      />
+
       {measurementMode ? (
-        <Text style={s.hint}>
-          Tap two points to add a dimension. Drag endpoints/label to adjust. Long-press a label to edit text.
-        </Text>
+        <Text style={s.hint}>Tap two points to measure. Drag to adjust. Save before downloading.</Text>
       ) : (
-        <Text style={s.hint}>Pinch to zoom, drag to pan.</Text>
+        <Text style={s.hint}>Pinch to zoom and drag to move around the plan.</Text>
       )}
 
       <View style={s.canvas}>
-        <PinchGestureHandler onGestureEvent={onPinchGestureEvent} onHandlerStateChange={onPinchStateChange}>
+        <GestureDetector gesture={composedGesture}>
           <Animated.View style={StyleSheet.absoluteFill}>
-            <PanGestureHandler onGestureEvent={onPanGestureEvent} onHandlerStateChange={onPanStateChange} minDist={3}>
-              <Animated.View style={StyleSheet.absoluteFill}>
-                <LongPressGestureHandler
-                  minDurationMs={420}
-                  onHandlerStateChange={(e) => {
-                    if (e.nativeEvent.state === State.ACTIVE) handleLongPress(e);
-                  }}
-                >
-                  <Animated.View style={StyleSheet.absoluteFill}>
-                    <TapGestureHandler
-                      maxDist={12}
-                      onHandlerStateChange={(e) => {
-                        if (e.nativeEvent.state === State.END) handleTap(e);
-                      }}
-                    >
-                      <Animated.View style={StyleSheet.absoluteFill}>
-                        {/* Content layer (image + SVG) */}
-                        <Animated.View
-                          style={[
-                            {
-                              position: 'absolute',
-                              left: fitted.x,
-                              top: fitted.y,
-                              width: fitted.w,
-                              height: fitted.h,
-                              transform: [{ translateX: animatedTranslateX }, { translateY: animatedTranslateY }, { scale: animatedScale }],
-                            },
-                          ]}
-                        >
-                          <View style={{ width: fitted.w, height: fitted.h, backgroundColor: theme.colors.surface }}>
-                            {imageUri ? <Image source={{ uri: imageUri }} style={{ width: fitted.w, height: fitted.h }} resizeMode="stretch" /> : null}
-                            <Svg width={fitted.w} height={fitted.h} style={StyleSheet.absoluteFill}>
-                              <Rect x={0} y={0} width={fitted.w} height={fitted.h} fill="transparent" />
-                              {renderedMeasurements.map(renderMeasurement)}
+            <Animated.View
+              style={{
+                position: 'absolute',
+                left: fitted.x,
+                top: fitted.y,
+                width: fitted.w,
+                height: fitted.h,
+                transform: [{ translateX: animatedTranslateX }, { translateY: animatedTranslateY }, { scale: animatedScale }],
+              }}
+            >
+              <View style={{ width: fitted.w, height: fitted.h, backgroundColor: theme.colors.surface }}>
+                {imageUri ? <Image source={{ uri: imageUri }} style={{ width: fitted.w, height: fitted.h }} resizeMode="stretch" /> : null}
+                <Svg width={fitted.w} height={fitted.h} style={StyleSheet.absoluteFill}>
+                  <Rect x={0} y={0} width={fitted.w} height={fitted.h} fill="transparent" />
+                  {renderedMeasurements.map(renderMeasurement)}
 
-                              {/* pending measurement preview */}
-                              {measurementMode && pendingStartPoint ? (
-                                <G>
-                                  <Circle cx={pendingStartPoint.x} cy={pendingStartPoint.y} r={6} fill={theme.colors.accent} />
-                                </G>
-                              ) : null}
-                            </Svg>
-                          </View>
-                        </Animated.View>
-                      </Animated.View>
-                    </TapGestureHandler>
-                  </Animated.View>
-                </LongPressGestureHandler>
-              </Animated.View>
-            </PanGestureHandler>
+                  {measurementMode && pendingStartPoint ? (
+                    <G>
+                      <Circle cx={pendingStartPoint.x} cy={pendingStartPoint.y} r={6} fill={theme.colors.accent} stroke="#fff" strokeWidth={2} />
+                      {pendingCurrentPoint ? (
+                        <>
+                          <Line
+                            x1={pendingStartPoint.x}
+                            y1={pendingStartPoint.y}
+                            x2={pendingCurrentPoint.x}
+                            y2={pendingCurrentPoint.y}
+                            stroke={theme.colors.accent}
+                            strokeWidth={2}
+                            strokeDasharray="4 4"
+                          />
+                          <Circle cx={pendingCurrentPoint.x} cy={pendingCurrentPoint.y} r={6} fill={theme.colors.accent} stroke="#fff" strokeWidth={2} />
+                        </>
+                      ) : null}
+                    </G>
+                  ) : null}
+                </Svg>
+              </View>
+            </Animated.View>
           </Animated.View>
-        </PinchGestureHandler>
+        </GestureDetector>
       </View>
 
       <LabelEditModal
@@ -516,30 +643,61 @@ export default function FloorplanAnnotator({
         initialValue={selectedMeasurement?.textOverride || ''}
         onCancel={() => setEditModal({ open: false, id: null })}
         onSave={(value) => {
-          if (editModal.id) updateMeasurement(editModal.id, { textOverride: value });
+          const trimmed = (value || '').trim();
+          const currentValue = (selectedMeasurement?.textOverride || '').trim();
+          if (editModal.id && trimmed !== currentValue) {
+            onRequestHistoryCheckpoint?.(annotations || []);
+            updateMeasurement(editModal.id, { textOverride: trimmed }, { trackHistory: false });
+          }
           setEditModal({ open: false, id: null });
         }}
         theme={theme}
       />
     </View>
   );
-}
+});
 
 function styles(theme) {
   return StyleSheet.create({
     root: {
       flex: 1,
+      position: 'relative',
     },
-    toolbar: {
+    exportSurface: {
+      position: 'absolute',
+      left: -10000,
+      top: 0,
+      opacity: 0.01,
+      pointerEvents: 'none',
+    },
+    toolbarCard: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.authInputBorder,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 10,
+    },
+    toolbarRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 10,
-      marginBottom: 10,
+      gap: 8,
+      alignItems: 'center',
+    },
+    toolbarHint: {
+      marginTop: 8,
+      color: theme.colors.muted,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '600',
     },
     hint: {
       color: theme.colors.muted,
       fontWeight: '600',
-      marginBottom: 10,
+      marginBottom: 8,
+      lineHeight: 17,
+      fontSize: 12,
     },
     canvas: {
       flex: 1,
@@ -549,8 +707,13 @@ function styles(theme) {
       borderColor: theme.colors.noticeBorder,
       overflow: 'hidden',
     },
+    toolbar: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
     pillButton: {
-      minHeight: 40,
+      minHeight: 36,
       borderRadius: 999,
       paddingHorizontal: 14,
       alignItems: 'center',
@@ -573,7 +736,12 @@ function styles(theme) {
       color: theme.colors.text,
       fontWeight: '800',
     },
-
+    disabledText: {
+      opacity: 0.35,
+    },
+    disabledPrimaryText: {
+      opacity: 0.7,
+    },
     modalBackdrop: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.45)',
@@ -618,3 +786,5 @@ function styles(theme) {
     },
   });
 }
+
+export default FloorplanAnnotator;

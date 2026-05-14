@@ -2,34 +2,42 @@ import React from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { AuthBackdrop } from '../components/auth/AuthVisuals';
 import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 
-function ActionButton({ icon, label, primary, onPress, disabled, styles, theme }) {
+function SourceRow({ icon, title, body, primary, onPress, disabled, styles, theme }) {
   return (
     <Pressable
-      style={[styles.actionButton, primary ? styles.actionButtonPrimary : styles.actionButtonSecondary, disabled ? styles.actionButtonDisabled : null]}
+      style={[
+        styles.sourceRow,
+        primary ? styles.sourceRowPrimary : styles.sourceRowSecondary,
+        disabled ? styles.sourceRowDisabled : null,
+      ]}
       onPress={onPress}
       disabled={disabled}
     >
-      <View style={[styles.actionIcon, primary ? styles.actionIconPrimary : styles.actionIconSecondary]}>
-        <Ionicons name={icon} size={22} color={primary ? '#ffffff' : theme.colors.text} />
+      <View style={[styles.sourceIconWrap, primary ? styles.sourceIconWrapPrimary : styles.sourceIconWrapSecondary]}>
+        <Ionicons name={icon} size={20} color={primary ? '#FFFFFF' : theme.colors.text} />
       </View>
-      <Text style={[styles.actionLabel, primary ? styles.actionLabelPrimary : null]}>{label}</Text>
+
+      <View style={styles.sourceCopy}>
+        <Text style={[styles.sourceTitle, primary ? styles.sourceTitlePrimary : null]}>{title}</Text>
+        <Text style={[styles.sourceBody, primary ? styles.sourceBodyPrimary : null]}>{body}</Text>
+      </View>
+
+      <Ionicons
+        name="chevron-forward"
+        size={18}
+        color={primary ? 'rgba(255,255,255,0.92)' : theme.colors.softText}
+      />
     </Pressable>
   );
 }
 
-function UploadPreview({ styles, theme }) {
+function FormatPill({ label, styles }) {
   return (
-    <View style={styles.previewShell}>
-      <View style={styles.previewStage}>
-        <View style={styles.dashedFrame} />
-        <View style={styles.uploadBadge}>
-          <Ionicons name="arrow-up-outline" size={22} color={theme.colors.accent} />
-        </View>
-        <Text style={styles.previewTitle}>Drop image or preview here</Text>
-        <Text style={styles.previewSubtitle}>JPEG or PNG</Text>
-      </View>
+    <View style={styles.formatPill}>
+      <Text style={styles.formatPillText}>{label}</Text>
     </View>
   );
 }
@@ -44,183 +52,248 @@ export default function UploadCaptureScreen({ busy, onPickFromGallery, onOpenCam
   const styles = createStyles(theme, isLandscape);
 
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Animated.View style={animatedStyle}>
-        <View style={styles.headerRow}>
-          <Pressable style={styles.backButton} onPress={onBack}>
-            <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
-          </Pressable>
+    <AuthBackdrop theme={theme}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Animated.View style={animatedStyle}>
+          <View style={styles.headerRow}>
+            <Pressable style={styles.backButton} onPress={onBack}>
+              <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
+            </Pressable>
 
-          <View style={styles.headerCopy}>
-            <Text style={styles.title}>Upload sketch</Text>
+            <View style={styles.headerCopy}>
+              <Text style={styles.title}>Upload sketch</Text>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.stage}>
-          <UploadPreview styles={styles} theme={theme} />
+          <View style={styles.panel}>
+            <View style={styles.previewCard}>
+              <View style={styles.previewIcon}>
+                <Ionicons name="document-text-outline" size={30} color={theme.colors.accent} />
+              </View>
 
-          <View style={styles.actions}>
-            <ActionButton
-              icon="arrow-up-outline"
-              label={busy ? 'Opening Gallery' : 'Choose from Gallery'}
-              primary
-              onPress={onPickFromGallery}
-              disabled={busy}
-              styles={styles}
-              theme={theme}
-            />
-            <ActionButton
-              icon="camera-outline"
-              label={busy ? 'Opening Camera' : 'Open Camera'}
-              onPress={onOpenCamera}
-              disabled={busy}
-              styles={styles}
-              theme={theme}
-            />
+              <Text style={styles.previewTitle}>Floor plan image</Text>
+              <Text style={styles.previewBody}>
+                Use a clear top-down sketch or photo with visible walls and minimal shadows.
+              </Text>
+
+              <View style={styles.formatRow}>
+                <FormatPill label="JPG" styles={styles} />
+                <FormatPill label="PNG" styles={styles} />
+              </View>
+            </View>
+
+            <View style={styles.sourcesBlock}>
+
+              <SourceRow
+                icon="images-outline"
+                title={busy ? 'Opening gallery' : 'Choose from Gallery'}
+                body="Select an existing image from your device."
+                primary
+                onPress={onPickFromGallery}
+                disabled={busy}
+                styles={styles}
+                theme={theme}
+              />
+
+              <SourceRow
+                icon="camera-outline"
+                title={busy ? 'Opening camera' : 'Open Camera'}
+                body="Take a new photo and upload it directly."
+                onPress={onOpenCamera}
+                disabled={busy}
+                styles={styles}
+                theme={theme}
+              />
+            </View>
           </View>
-        </View>
-      </Animated.View>
-    </ScrollView>
+        </Animated.View>
+      </ScrollView>
+    </AuthBackdrop>
   );
 }
 
 function createStyles(theme, isLandscape) {
   return StyleSheet.create({
     content: {
-      paddingBottom: 30,
+      flexGrow: 1,
+      paddingBottom: 24,
     },
     headerRow: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: 12,
-      marginBottom: 16,
+      marginBottom: 18,
     },
     backButton: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: theme.colors.surface,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.colors.authInputBorder,
+      ...theme.shadow.soft,
     },
     headerCopy: {
       flex: 1,
+      paddingTop: 2,
     },
     title: {
       color: theme.colors.text,
-      fontSize: isLandscape ? 34 : 31,
+      fontSize: isLandscape ? 33 : 30,
       fontWeight: '900',
       letterSpacing: -0.9,
     },
     subtitle: {
       marginTop: 6,
       color: theme.colors.muted,
-      fontWeight: '700',
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+      maxWidth: 330,
     },
-    stage: {
-      backgroundColor: theme.colors.surfaceElevated,
-      borderRadius: theme.radius.xl,
+    panel: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 30,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: 'rgba(255,255,255,0.72)',
       padding: 16,
       ...theme.shadow.card,
     },
-    previewShell: {
-      backgroundColor: theme.colors.heroTint,
-      borderRadius: 28,
+    previewCard: {
+      backgroundColor: theme.colors.surfaceAlt,
+      borderRadius: 24,
       borderWidth: 1,
-      borderColor: theme.colors.noticeBorder,
-      padding: 14,
+      borderColor: theme.colors.authInputBorder,
+      paddingHorizontal: 18,
+      paddingVertical: 22,
+      alignItems: 'center',
       marginBottom: 16,
     },
-    previewStage: {
-      minHeight: isLandscape ? 290 : 340,
-      borderRadius: 24,
+    previewIcon: {
+      width: 58,
+      height: 58,
+      borderRadius: 18,
       backgroundColor: theme.colors.surface,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: theme.colors.authInputBorder,
       alignItems: 'center',
       justifyContent: 'center',
-      overflow: 'hidden',
-      padding: 20,
-    },
-    dashedFrame: {
-      position: 'absolute',
-      left: 16,
-      right: 16,
-      top: 16,
-      bottom: 16,
-      borderRadius: 20,
-      borderWidth: 1.5,
-      borderStyle: 'dashed',
-      borderColor: theme.colors.noticeBorder,
-    },
-    uploadBadge: {
-      width: 56,
-      height: 56,
-      borderRadius: 18,
-      backgroundColor: theme.colors.accentSoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 18,
+      marginBottom: 16,
     },
     previewTitle: {
       color: theme.colors.text,
-      fontSize: 20,
+      fontSize: 21,
       fontWeight: '800',
       textAlign: 'center',
     },
-    previewSubtitle: {
+    previewBody: {
       marginTop: 8,
       color: theme.colors.muted,
-      fontWeight: '700',
+      fontSize: 14,
+      lineHeight: 21,
+      fontWeight: '600',
       textAlign: 'center',
+      maxWidth: 290,
     },
-    actions: {
-      gap: 12,
+    formatRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 16,
     },
-    actionButton: {
-      minHeight: 58,
-      borderRadius: 18,
-      paddingHorizontal: 18,
+    formatPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.authInputBorder,
+    },
+    formatPillText: {
+      color: theme.colors.muted,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    sourcesBlock: {
+      gap: 10,
+    },
+    sectionLabel: {
+      color: theme.colors.softText,
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 2,
+    },
+    sourceRow: {
+      minHeight: 84,
+      borderRadius: 22,
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      borderWidth: 1,
     },
-    actionButtonPrimary: {
-      backgroundColor: theme.colors.accent,
-      borderColor: theme.colors.accent,
+    sourceRowPrimary: {
+      backgroundColor: theme.colors.authDark,
+      borderColor: theme.colors.authDark,
     },
-    actionButtonSecondary: {
-      backgroundColor: theme.colors.heroTint,
-      borderColor: theme.colors.noticeBorder,
+    sourceRowSecondary: {
+      backgroundColor: theme.colors.surfaceAlt,
+      borderColor: theme.colors.authInputBorder,
     },
-    actionButtonDisabled: {
+    sourceRowDisabled: {
       opacity: 0.72,
     },
-    actionIcon: {
-      width: 34,
-      height: 34,
-      borderRadius: 12,
+    sourceIconWrap: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    actionIconPrimary: {
-      backgroundColor: 'rgba(255,255,255,0.16)',
+    sourceIconWrapPrimary: {
+      backgroundColor: 'rgba(255,255,255,0.14)',
     },
-    actionIconSecondary: {
-      backgroundColor: theme.colors.panel,
+    sourceIconWrapSecondary: {
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.authInputBorder,
     },
-    actionLabel: {
+    sourceCopy: {
+      flex: 1,
+    },
+    sourceTitle: {
       color: theme.colors.text,
       fontSize: 17,
       fontWeight: '800',
     },
-    actionLabelPrimary: {
-      color: '#ffffff',
+    sourceTitlePrimary: {
+      color: '#FFFFFF',
+    },
+    sourceBody: {
+      marginTop: 5,
+      color: theme.colors.muted,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+    sourceBodyPrimary: {
+      color: 'rgba(255,255,255,0.72)',
+    },
+    noteRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 6,
+      marginTop: 14,
+    },
+    noteText: {
+      flex: 1,
+      color: theme.colors.softText,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '600',
     },
   });
 }

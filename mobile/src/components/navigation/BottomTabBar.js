@@ -10,7 +10,7 @@ function TabButton({ active, tab, onPress, theme }) {
 
   return (
     <Pressable style={[styles.tabButton, active ? styles.tabButtonActive : null]} onPress={onPress}>
-      <Ionicons name={active ? meta.activeIcon : meta.icon} size={19} color={active ? theme.colors.accent : theme.colors.softText} />
+      <Ionicons name={active ? meta.activeIcon : meta.icon} size={19} color={active ? '#FFFFFF' : theme.colors.softText} />
       <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>{meta.label}</Text>
     </Pressable>
   );
@@ -34,10 +34,10 @@ function createStyles(theme) {
       marginTop: 12,
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: theme.colors.surfaceElevated,
-      borderRadius: 22,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 26,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: 'rgba(255,255,255,0.72)',
       paddingHorizontal: 7,
       paddingVertical: 7,
       ...theme.shadow.card,
@@ -51,7 +51,7 @@ function createStyles(theme) {
       borderRadius: 18,
     },
     tabButtonActive: {
-      backgroundColor: theme.colors.heroTint,
+      backgroundColor: theme.colors.authDark,
     },
     tabLabel: {
       color: theme.colors.softText,
@@ -59,7 +59,7 @@ function createStyles(theme) {
       fontSize: 12,
     },
     tabLabelActive: {
-      color: theme.colors.accent,
+      color: '#FFFFFF',
     },
   });
 }

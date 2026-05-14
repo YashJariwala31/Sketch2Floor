@@ -17,8 +17,8 @@ const shared = {
 };
 
 const lightColors = {
-  background: '#F3F7FC',
-  backgroundAccent: '#EAF1F9',
+  background: '#F8F9FE',
+  backgroundAccent: '#EEF2FB',
   surface: '#FFFFFF',
   surfaceAlt: '#F7FAFE',
   surfaceElevated: '#FCFDFF',
@@ -50,16 +50,35 @@ const lightColors = {
   canvasLine: 'rgba(33, 51, 74, 0.62)',
   canvasGrid: 'rgba(33, 51, 74, 0.12)',
   overlay: 'rgba(21, 36, 58, 0.04)',
+  authBackdrop: '#FBFBFE',
+  authMistBlue: 'rgba(122, 201, 255, 0.18)',
+  authMistPink: 'rgba(255, 189, 216, 0.18)',
+  authMistWarm: 'rgba(255, 222, 196, 0.2)',
+  authMistLavender: 'rgba(208, 196, 255, 0.15)',
+  authCardShadow: 'rgba(22, 36, 55, 0.12)',
+  authInputBorder: '#E6E8F0',
+  authInputFill: '#FFFFFF',
+  authDark: '#080808',
+  authToggle: '#4855FF',
+  authGoogleFill: '#FFF2F3',
+  authGoogleBorder: '#F7E1E6',
+  authHeroTop: '#05070B',
+  authHeroBlue: 'rgba(36, 204, 255, 0.32)',
+  authHeroPurple: 'rgba(159, 91, 255, 0.28)',
+  authHeroPink: 'rgba(255, 165, 206, 0.18)',
+  authIridescentBlue: '#49C6FF',
+  authIridescentPurple: '#816BFF',
+  authIridescentPink: '#FF7BC8',
 };
 
 function createShadow(colors) {
   return {
     card: {
-      shadowColor: colors.shadow,
+      shadowColor: colors.authCardShadow,
       shadowOffset: { width: 0, height: 14 },
-      shadowOpacity: 0.075,
-      shadowRadius: 30,
-      elevation: 5,
+      shadowOpacity: 0.12,
+      shadowRadius: 34,
+      elevation: 7,
     },
     soft: {
       shadowColor: colors.shadow,

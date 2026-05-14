@@ -45,10 +45,6 @@ def main():
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
-    # Ensure relative paths inside stages resolve consistently
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(project_root)
-
     from . import stage0
     from . import stage1_preprocess
     from . import stage2_line_detection

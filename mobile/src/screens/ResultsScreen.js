@@ -1,15 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 
-import FloorplanAnnotator from '../components/annotation/FloorplanAnnotator';
+import { AuthBackdrop } from '../components/auth/AuthVisuals';
 import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 import { saveJobAnnotations } from '../api/client';
-import { loadLocalAnnotations, saveLocalAnnotations } from '../utils/annotationStorage';
+import MeasurementEditorScreen from './MeasurementEditorScreen';
+import { loadAnnotatedPreview, loadLocalAnnotations, saveAnnotatedPreview, saveLocalAnnotations } from '../utils/annotationStorage';
 import { getJobStatusMeta, getResultsScreenTitle, trimMultilineText } from '../utils/jobPresentation';
 
 function Loader({ styles }) {
   const spin = useRef(new Animated.Value(0)).current;
+  const ringSize = 184;
+  const radius = 60;
+  const dotSize = 12;
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -32,8 +37,8 @@ function Loader({ styles }) {
     () =>
       Array.from({ length: 10 }, (_, index) => {
         const angle = (Math.PI * 2 * index) / 10;
-        const left = 110 + Math.cos(angle) * 72 - 6;
-        const top = 110 + Math.sin(angle) * 72 - 6;
+        const left = ringSize / 2 + Math.cos(angle) * radius - dotSize / 2;
+        const top = ringSize / 2 + Math.sin(angle) * radius - dotSize / 2;
         return (
           <View
             key={index}
@@ -57,7 +62,7 @@ function Loader({ styles }) {
         {dots}
       </Animated.View>
       <View style={styles.loaderCenter}>
-        <Text style={styles.loaderText}>AI</Text>
+        <Ionicons name="sparkles" size={28} color={styles.loaderText.color} />
       </View>
     </View>
   );
@@ -92,6 +97,26 @@ function ErrorPanel({ title, body, styles }) {
   );
 }
 
+function InfoChip({ label, styles }) {
+  return (
+    <View style={styles.infoChip}>
+      <Text style={styles.infoChipText}>{label}</Text>
+    </View>
+  );
+}
+
+function cloneAnnotations(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  return list.map((item) => ({
+    ...item,
+    p1: item?.p1 ? { ...item.p1 } : item?.p1,
+    p2: item?.p2 ? { ...item.p2 } : item?.p2,
+  }));
+}
+
 export default function ResultsScreen({
   job,
   busy,
@@ -110,35 +135,25 @@ export default function ResultsScreen({
     duration: 280,
   });
   const styles = createStyles(theme, isLandscape);
-
-  if (!job) {
-    return (
-      <View style={styles.emptyState}>
-        <Text style={styles.emptyText}>No project selected.</Text>
-      </View>
-    );
-  }
-
-  const status = getJobStatusMeta(job.status, theme, {
-    processing: 'AI scan active',
-    queued: 'AI scan active',
-  });
-  const topTitle = getResultsScreenTitle(job.status);
-  const primaryError = error || job.metadata?.error;
-  const stderrPreview = trimMultilineText(job.metadata?.stderr);
-
-  const [measurementMode, setMeasurementMode] = useState(false);
+  const annotatorRef = useRef(null);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [annotations, setAnnotations] = useState([]);
   const [undoStack, setUndoStack] = useState([]);
   const [saveBusy, setSaveBusy] = useState(false);
+  const [annotatedPreviewUri, setAnnotatedPreviewUri] = useState(null);
 
   useEffect(() => {
     let mounted = true;
     async function loadAnnotations() {
-      setMeasurementMode(false);
+      setEditorOpen(false);
       setUndoStack([]);
 
       const fromBackend = Array.isArray(job?.annotations) ? job.annotations : null;
+      const preview = await loadAnnotatedPreview(job?.id);
+      if (mounted) {
+        setAnnotatedPreviewUri(preview);
+      }
+
       if (fromBackend) {
         if (mounted) setAnnotations(fromBackend);
         return;
@@ -157,21 +172,54 @@ export default function ResultsScreen({
     };
   }, [job?.id]);
 
-  function handleChangeAnnotations(next) {
+  if (!job) {
+    return (
+      <AuthBackdrop theme={theme}>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>No project selected.</Text>
+        </View>
+      </AuthBackdrop>
+    );
+  }
+
+  const status = getJobStatusMeta(job.status, theme, {
+    processing: 'AI scan active',
+    queued: 'AI scan active',
+  });
+  const neutralStatus = {
+    fill: theme.colors.authDark,
+    text: '#FFFFFF',
+    label: status.label,
+  };
+  const topTitle = getResultsScreenTitle(job.status);
+  const primaryError = error || job.metadata?.error;
+  const stderrPreview = trimMultilineText(job.metadata?.stderr);
+
+  function pushUndoSnapshot(snapshot) {
+    setUndoStack((stack) => [...stack.slice(-49), cloneAnnotations(snapshot)]);
+  }
+
+  function handleChangeAnnotations(next, options = {}) {
+    const { trackHistory = true } = options;
     setAnnotations((prev) => {
-      setUndoStack((stack) => {
-        const trimmed = stack.slice(-50);
-        return [...trimmed, Array.isArray(prev) ? prev : []];
-      });
-      return next;
+      const resolved = typeof next === 'function' ? next(prev) : next;
+      const normalized = Array.isArray(resolved) ? resolved : [];
+      if (trackHistory) {
+        pushUndoSnapshot(prev);
+      }
+      return normalized;
     });
+  }
+
+  function handleHistoryCheckpoint(snapshot = annotations) {
+    pushUndoSnapshot(snapshot);
   }
 
   function handleUndo() {
     setUndoStack((stack) => {
       if (!stack.length) return stack;
       const nextStack = stack.slice(0, -1);
-      const prev = stack[stack.length - 1];
+      const prev = cloneAnnotations(stack[stack.length - 1]);
       setAnnotations(prev);
       return nextStack;
     });
@@ -179,50 +227,161 @@ export default function ResultsScreen({
 
   function handleDeleteSelected(measurementId) {
     if (!measurementId) return;
-    handleChangeAnnotations((annotations || []).filter((m) => m?.id !== measurementId));
+    handleChangeAnnotations((current) => (current || []).filter((m) => m?.id !== measurementId));
   }
 
-  async function handleSaveAnnotations() {
+  async function persistAnnotations({ showErrorAlert = true } = {}) {
     if (!job?.id) return;
     try {
       setSaveBusy(true);
       await saveLocalAnnotations(job.id, annotations || []);
       await saveJobAnnotations(job.id, annotations || []);
+      return true;
     } catch (err) {
-      Alert.alert('Save failed', err.message || 'Unable to save measurements.');
+      if (showErrorAlert) {
+        Alert.alert('Save failed', err.message || 'Unable to save measurements.');
+      }
+      return false;
     } finally {
       setSaveBusy(false);
     }
   }
 
+  async function handleSaveAnnotations() {
+    const saved = await persistAnnotations({ showErrorAlert: true });
+    if (!saved || !annotatorRef.current?.captureAnnotatedImage || !job?.id) {
+      return;
+    }
+
+    try {
+      const previewUri = await annotatorRef.current.captureAnnotatedImage();
+      const storedPreviewUri = await saveAnnotatedPreview(job.id, previewUri);
+      setAnnotatedPreviewUri(storedPreviewUri);
+    } catch (err) {
+      Alert.alert('Preview update failed', err.message || 'Measurements were saved, but the annotated preview could not be updated.');
+    }
+  }
+
+  async function handleDownloadResult() {
+    const downloadSource = annotatedPreviewUri || job?.combined_overlay_url;
+    if (!downloadSource) {
+      Alert.alert('Download failed', 'No generated floor plan is available yet.');
+      return;
+    }
+    if (annotations.length && !annotatedPreviewUri) {
+      Alert.alert('Save measurements first', 'Open the measurement screen and tap Save before downloading the annotated image.');
+      return;
+    }
+
+    await onSaveResult(downloadSource);
+  }
+
+  if (job.status === 'completed' && editorOpen) {
+    return (
+      <MeasurementEditorScreen
+        job={job}
+        annotatorRef={annotatorRef}
+        annotations={annotations}
+        onChangeAnnotations={handleChangeAnnotations}
+        onRequestUndo={handleUndo}
+        onRequestDeleteSelected={handleDeleteSelected}
+        onRequestSave={handleSaveAnnotations}
+        onRequestHistoryCheckpoint={handleHistoryCheckpoint}
+        onBack={() => setEditorOpen(false)}
+        busy={busy || saveBusy}
+        theme={theme}
+        isLandscape={isLandscape}
+      />
+    );
+  }
+
   if (job.status === 'processing' || job.status === 'queued') {
     return (
-      <Animated.View style={[styles.screen, animatedStyle]}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.headerRow}>
-            <BackButton onBack={onBack} theme={theme} styles={styles} />
-            <Text style={styles.screenTitle}>{topTitle}</Text>
-            <StatusPill meta={status} styles={styles} />
-          </View>
+      <AuthBackdrop theme={theme}>
+        <Animated.View style={[styles.screen, animatedStyle]}>
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.headerRow}>
+              <BackButton onBack={onBack} theme={theme} styles={styles} />
+              <Text style={styles.screenTitle}>{topTitle}</Text>
+              <StatusPill meta={neutralStatus} styles={styles} />
+            </View>
 
-          <View style={styles.processingCard}>
-            <Loader styles={styles} />
-            <Text style={styles.processingTitle}>Processing your floor plan...</Text>
-            <Text style={styles.processingSubtitle}>Detecting walls, doors, and layout</Text>
-            <View style={styles.progressPill}>
-              <Text style={styles.progressPillText}>AI scan active</Text>
+            <View style={styles.processingCard}>
+              <View style={styles.processingTop}>
+                <Text style={styles.processingTitle}>Processing your floor plan</Text>
+                <Text style={styles.processingSubtitle}>We are converting the sketch into a clean digital layout and checking the room structure.</Text>
+              </View>
+
+              <Loader styles={styles} />
+
+              <View style={styles.progressTrack}>
+                <View style={styles.progressFill} />
+              </View>
             </View>
-            <View style={styles.progressTrack}>
-              <View style={styles.progressFill} />
-            </View>
-          </View>
-        </ScrollView>
-      </Animated.View>
+          </ScrollView>
+        </Animated.View>
+      </AuthBackdrop>
     );
   }
 
   if (job.status === 'completed') {
     return (
+      <AuthBackdrop theme={theme}>
+        <Animated.View style={[styles.screen, animatedStyle]}>
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.headerRow}>
+              <BackButton onBack={onBack} theme={theme} styles={styles} />
+              <Text style={styles.screenTitle}>{topTitle}</Text>
+              <StatusPill meta={status} styles={styles} />
+            </View>
+
+            <View style={styles.resultCard}>
+              <View style={styles.resultHeader}>
+                <View style={styles.resultCopy}>
+                  <Text style={styles.outputTitle}>Digital floor plan ready</Text>
+                </View>
+              </View>
+
+              <View style={styles.previewFrame}>
+                {job.combined_overlay_url ? (
+                  <Image source={{ uri: annotatedPreviewUri || job.combined_overlay_url }} style={styles.previewImage} resizeMode="contain" />
+                ) : (
+                  <View style={styles.outputEmpty}>
+                    <Ionicons name="image-outline" size={22} color={theme.colors.softText} />
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.outputActionRow}>
+                <Pressable
+                  style={[styles.actionButton, styles.primaryActionButton, styles.primarySummaryAction]}
+                  onPress={handleDownloadResult}
+                  disabled={busy || saveBusy || !(annotatedPreviewUri || job.combined_overlay_url)}
+                >
+                  <Text style={styles.primaryActionText}>{busy || saveBusy ? 'Saving...' : 'Download'}</Text>
+                </Pressable>
+                <Pressable style={[styles.actionButton, styles.secondaryActionButton]} onPress={() => setEditorOpen(true)} disabled={!job.combined_overlay_url}>
+                  <Text style={styles.secondaryActionText}>Add Measurements</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.summaryFooter}>
+                <Text style={styles.summaryFooterText}>
+                  {annotations.length ? 'Saved measurements will appear in the downloaded image.' : 'No measurements added yet.'}
+                </Text>
+                <Pressable style={styles.summaryFooterLink} onPress={onTryAnother}>
+                  <Text style={styles.summaryFooterLinkText}>Try Another</Text>
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
+        </Animated.View>
+      </AuthBackdrop>
+    );
+  }
+
+  return (
+    <AuthBackdrop theme={theme}>
       <Animated.View style={[styles.screen, animatedStyle]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.headerRow}>
@@ -231,82 +390,36 @@ export default function ResultsScreen({
             <StatusPill meta={status} styles={styles} />
           </View>
 
-          <View style={styles.outputCard}>
-            <View style={styles.planFrame}>
-              {job.combined_overlay_url ? (
-                <FloorplanAnnotator
-                  imageUri={job.combined_overlay_url}
-                  theme={theme}
-                  annotations={annotations}
-                  onChangeAnnotations={handleChangeAnnotations}
-                  measurementMode={measurementMode}
-                  onRequestToggleMeasurementMode={() => setMeasurementMode((v) => !v)}
-                  onRequestUndo={handleUndo}
-                  onRequestDeleteSelected={handleDeleteSelected}
-                  onRequestSave={handleSaveAnnotations}
-                  busy={busy || saveBusy}
-                />
-              ) : (
-                <View style={styles.outputEmpty}>
-                  <Ionicons name="image-outline" size={22} color={theme.colors.softText} />
-                </View>
-              )}
-            </View>
+          <View style={styles.issueCard}>
+            <Text style={styles.issueTitle}>This project needs another try</Text>
+            <Text style={styles.issueSubtitle}>Something interrupted the conversion.</Text>
 
             <View style={styles.actionRow}>
-              <Pressable style={[styles.actionButton, styles.primaryActionButton, { flexGrow: 1 }]} onPress={() => onSaveResult(job.combined_overlay_url)} disabled={busy || !job.combined_overlay_url}>
-                <Text style={styles.primaryActionText}>{busy ? 'Saving...' : 'Download'}</Text>
+              <Pressable style={[styles.actionButton, styles.secondaryActionButton]} onPress={onRefresh}>
+                <Text style={styles.secondaryActionText}>Refresh</Text>
               </Pressable>
-              <Pressable style={[styles.actionButton, styles.secondaryActionButton, styles.tryAnotherButton]} onPress={onTryAnother}>
-                <Text style={styles.secondaryActionText}>Try Another</Text>
+              <Pressable style={[styles.actionButton, styles.primaryActionButton]} onPress={onStartJob} disabled={busy}>
+                <Text style={styles.primaryActionText}>{busy ? 'Starting' : 'Retry'}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.actionButton, styles.deleteButton]}
+                onPress={() =>
+                  Alert.alert('Delete project', 'Remove this floorplan project permanently?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: () => onDeleteJob(job) },
+                  ])
+                }
+              >
+                <Text style={styles.deleteButtonText}>Delete</Text>
               </Pressable>
             </View>
-
-            <Text style={styles.outputTitle}>Digital floor plan generated</Text>
           </View>
+
+          <ErrorPanel title="Error" body={primaryError} styles={styles} />
+          <ErrorPanel title="Details" body={stderrPreview} styles={styles} />
         </ScrollView>
       </Animated.View>
-    );
-  }
-
-  return (
-    <Animated.View style={[styles.screen, animatedStyle]}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <BackButton onBack={onBack} theme={theme} styles={styles} />
-          <Text style={styles.screenTitle}>{topTitle}</Text>
-          <StatusPill meta={status} styles={styles} />
-        </View>
-
-        <View style={styles.issueCard}>
-          <Text style={styles.issueTitle}>This project needs another try</Text>
-          <Text style={styles.issueSubtitle}>Something interrupted the conversion.</Text>
-
-          <View style={styles.actionRow}>
-            <Pressable style={[styles.actionButton, styles.secondaryActionButton]} onPress={onRefresh}>
-              <Text style={styles.secondaryActionText}>Refresh</Text>
-            </Pressable>
-            <Pressable style={[styles.actionButton, styles.primaryActionButton]} onPress={onStartJob} disabled={busy}>
-              <Text style={styles.primaryActionText}>{busy ? 'Starting' : 'Retry'}</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.actionButton, styles.deleteButton]}
-              onPress={() =>
-                Alert.alert('Delete project', 'Remove this floorplan project permanently?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => onDeleteJob(job) },
-                ])
-              }
-            >
-              <Text style={styles.deleteButtonText}>Delete</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <ErrorPanel title="Error" body={primaryError} styles={styles} />
-        <ErrorPanel title="Details" body={stderrPreview} styles={styles} />
-      </ScrollView>
-    </Animated.View>
+    </AuthBackdrop>
   );
 }
 
@@ -316,6 +429,7 @@ function createStyles(theme, isLandscape) {
       flex: 1,
     },
     content: {
+      flexGrow: 1,
       paddingBottom: 30,
     },
     headerRow: {
@@ -351,52 +465,65 @@ function createStyles(theme, isLandscape) {
       fontWeight: '800',
     },
     processingCard: {
-      minHeight: isLandscape ? 540 : 620,
-      borderRadius: theme.radius.xl,
-      backgroundColor: theme.colors.surfaceElevated,
+      minHeight: isLandscape ? 520 : 560,
+      borderRadius: 30,
+      backgroundColor: theme.colors.surface,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: 'rgba(255,255,255,0.72)',
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 24,
+      paddingVertical: 24,
       ...theme.shadow.card,
     },
+    processingTop: {
+      alignItems: 'center',
+      marginBottom: 10,
+    },
     loaderWrap: {
-      width: 220,
-      height: 220,
+      width: 184,
+      height: 184,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: 26,
+      marginBottom: 18,
     },
     loaderRing: {
       position: 'absolute',
-      width: 220,
-      height: 220,
+      width: 184,
+      height: 184,
     },
     loaderDot: {
       position: 'absolute',
       width: 12,
       height: 12,
       borderRadius: 6,
-      backgroundColor: theme.colors.accent,
+      backgroundColor: '#2A3140',
     },
     loaderCenter: {
-      width: 108,
-      height: 108,
-      borderRadius: 54,
-      backgroundColor: theme.colors.accentSoft,
+      width: 92,
+      height: 92,
+      borderRadius: 46,
+      backgroundColor: theme.colors.authDark,
+      borderWidth: 1,
+      borderColor: theme.colors.authDark,
       alignItems: 'center',
       justifyContent: 'center',
     },
     loaderText: {
-      color: theme.colors.accent,
-      fontSize: 34,
+      color: '#FFFFFF',
+      fontSize: 30,
       fontWeight: '900',
       letterSpacing: -0.8,
     },
+    sectionEyebrow: {
+      color: theme.colors.softText,
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 8,
+    },
     processingTitle: {
       color: theme.colors.text,
-      fontSize: isLandscape ? 30 : 28,
+      fontSize: isLandscape ? 30 : 26,
       fontWeight: '900',
       textAlign: 'center',
       letterSpacing: -0.8,
@@ -408,83 +535,131 @@ function createStyles(theme, isLandscape) {
       fontWeight: '600',
       textAlign: 'center',
     },
-    progressPill: {
-      marginTop: 22,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 999,
-      backgroundColor: theme.colors.accentSoft,
-    },
-    progressPillText: {
-      color: theme.colors.accent,
-      fontWeight: '800',
-      fontSize: 12,
-    },
     progressTrack: {
-      width: 158,
+      width: 190,
       height: 8,
       borderRadius: 999,
-      backgroundColor: theme.colors.noticeBorder,
-      marginTop: 20,
+      backgroundColor: theme.colors.authInputBorder,
+      marginTop: 4,
       overflow: 'hidden',
     },
     progressFill: {
       width: '72%',
       height: '100%',
       borderRadius: 999,
-      backgroundColor: theme.colors.accent,
+      backgroundColor: theme.colors.authDark,
     },
-    outputCard: {
-      backgroundColor: theme.colors.surfaceElevated,
-      borderRadius: theme.radius.xl,
+    processingInfoRow: {
+      marginTop: 18,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    infoChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: theme.colors.surfaceAlt,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-      padding: 16,
+      borderColor: theme.colors.authInputBorder,
+    },
+    infoChipText: {
+      color: theme.colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    resultCard: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 30,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.72)',
+      padding: 18,
       ...theme.shadow.card,
     },
-    planFrame: {
-      height: isLandscape ? 520 : 620,
-      borderRadius: 24,
-      backgroundColor: theme.colors.heroTint,
-      borderWidth: 1,
-      borderColor: theme.colors.noticeBorder,
-      padding: 14,
+    resultHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
       marginBottom: 16,
-      position: 'relative',
     },
-    outputImage: {
+    resultCopy: {
       flex: 1,
-      borderRadius: 20,
-      backgroundColor: theme.colors.surface,
+    },
+    resultBadge: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: theme.colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: theme.colors.authInputBorder,
+    },
+    resultBadgeText: {
+      color: theme.colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    previewFrame: {
+      height: isLandscape ? 420 : 460,
+      borderRadius: 22,
+      overflow: 'hidden',
+      backgroundColor: theme.colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: theme.colors.authInputBorder,
+      marginBottom: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 14,
+    },
+    previewImage: {
+      width: '100%',
+      height: '100%',
+    },
+    outputActionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginBottom: 16,
+    },
+    primarySummaryAction: {
+      flexGrow: 1,
     },
     outputEmpty: {
       flex: 1,
-      borderRadius: 20,
+      width: '100%',
+      height: '100%',
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: theme.colors.surface,
     },
-    zoomPill: {
-      position: 'absolute',
-      right: 20,
-      top: 18,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
+    summaryFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
     },
-    zoomText: {
+    summaryFooterText: {
+      flex: 1,
       color: theme.colors.muted,
-      fontSize: 12,
-      fontWeight: '700',
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '600',
+    },
+    summaryFooterLink: {
+      paddingHorizontal: 2,
+      paddingVertical: 4,
+    },
+    summaryFooterLinkText: {
+      color: theme.colors.text,
+      fontSize: 13,
+      fontWeight: '800',
     },
     actionRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 10,
-      marginBottom: 16,
     },
     actionButton: {
       minHeight: 48,
@@ -495,15 +670,12 @@ function createStyles(theme, isLandscape) {
       borderWidth: 1,
     },
     primaryActionButton: {
-      backgroundColor: theme.colors.accent,
-      borderColor: theme.colors.accent,
+      backgroundColor: theme.colors.authDark,
+      borderColor: theme.colors.authDark,
     },
     secondaryActionButton: {
-      backgroundColor: theme.colors.heroTint,
-      borderColor: theme.colors.noticeBorder,
-    },
-    tryAnotherButton: {
-      flexGrow: 1,
+      backgroundColor: theme.colors.surfaceAlt,
+      borderColor: theme.colors.authInputBorder,
     },
     deleteButton: {
       backgroundColor: theme.colors.errorBg,
@@ -526,19 +698,20 @@ function createStyles(theme, isLandscape) {
     },
     outputTitle: {
       color: theme.colors.text,
-      fontSize: 20,
-      fontWeight: '800',
+      fontSize: 24,
+      fontWeight: '900',
     },
     outputSubtitle: {
       marginTop: 6,
       color: theme.colors.muted,
       fontWeight: '600',
+      lineHeight: 21,
     },
     issueCard: {
-      backgroundColor: theme.colors.surfaceElevated,
-      borderRadius: theme.radius.xl,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 30,
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: 'rgba(255,255,255,0.72)',
       padding: 18,
       marginBottom: 14,
       ...theme.shadow.card,

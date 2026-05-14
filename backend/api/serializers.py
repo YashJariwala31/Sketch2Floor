@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from pathlib import Path
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 from .models import FloorplanJob
 
@@ -52,6 +53,37 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+    def validate_original_image(self, value):
+        if value:
+            # 1. Size check: 10MB limit
+            if value.size > 10 * 1024 * 1024:
+                raise serializers.ValidationError("Image file too large (max 10MB).")
+
+            # 2. Extension check
+            valid_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
+            ext = Path(value.name).suffix.lower()
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file extension {ext}. Supported: {', '.join(valid_extensions)}"
+                )
+
+            # 3. Dimension check: Ensure it's a reasonably sized image
+            from django.core.files.images import get_image_dimensions
+            w, h = get_image_dimensions(value)
+            if not w or not h:
+                raise serializers.ValidationError("Could not determine image dimensions. The file may be corrupt.")
+            if w < 300 or h < 300:
+                raise serializers.ValidationError(
+                    f"Image dimensions too small ({w}x{h}). Minimum 300x300 required for processing."
+                )
+            if w > 8000 or h > 8000:
+                # Extremely large images might crash the server or ML pipeline
+                raise serializers.ValidationError(
+                    f"Image dimensions too large ({w}x{h}). Maximum 8000x8000 allowed."
+                )
+
+        return value
 
     def get_original_image_url(self, obj):
         request = self.context.get('request')

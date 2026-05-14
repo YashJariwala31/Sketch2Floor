@@ -24,6 +24,7 @@ function createSession(authValues) {
   return {
     email: authValues.email,
     name: authValues.fullName || authValues.email.split('@')[0],
+    password: authValues.password || '',
   };
 }
 
@@ -46,8 +47,6 @@ export default function App() {
     loading,
     busy,
     error,
-    connection,
-    refreshConnection,
     loadJobs,
     uploadAsset,
     startExistingJob,
@@ -101,14 +100,6 @@ export default function App() {
 
     return () => subscription.remove();
   }, [activeTab, authRoute, clearSelectedJob, homeView, selectedJob, session]);
-
-  async function handleConnectionRefresh(showSuccess = false) {
-    const result = await refreshConnection();
-    if (showSuccess && result.ok) {
-      Alert.alert('Connection looks good', 'The backend is reachable.');
-    }
-    return result;
-  }
 
   async function handleCaptureImage() {
     try {
@@ -191,6 +182,45 @@ export default function App() {
     setSession(null);
   }
 
+  function handleUpdateProfileName(nextName) {
+    const trimmedName = String(nextName || '').trim();
+    if (!trimmedName) {
+      throw new Error('Username cannot be empty.');
+    }
+
+    setSession((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        name: trimmedName,
+      };
+    });
+  }
+
+  function handleChangePassword({ currentPassword, newPassword }) {
+    const nextPassword = String(newPassword || '');
+    if (nextPassword.length < 6) {
+      throw new Error('Use at least 6 characters for the new password.');
+    }
+    if (!session) {
+      throw new Error('No active session found.');
+    }
+    if ((session.password || '') !== String(currentPassword || '')) {
+      throw new Error('Your current password is incorrect.');
+    }
+
+    setSession((current) =>
+      current
+        ? {
+            ...current,
+            password: nextPassword,
+          }
+        : current
+    );
+  }
+
   function handleTabChange(tab) {
     setActiveTab(tab);
     if (tab === TABS.HOME) {
@@ -248,9 +278,9 @@ export default function App() {
     if (activeTab === TABS.PROFILE) {
       return (
         <ProfileScreen
-          connection={connection}
           session={session}
-          onRefreshConnection={() => handleConnectionRefresh(true)}
+          onUpdateProfileName={handleUpdateProfileName}
+          onChangePassword={handleChangePassword}
           onSignOut={handleSignOut}
           theme={theme}
           isLandscape={isLandscape}

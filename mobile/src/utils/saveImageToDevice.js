@@ -12,6 +12,10 @@ function getExtensionFromUrl(url) {
   return match ? match[1].toLowerCase() : 'png';
 }
 
+function isRemoteSource(uri) {
+  return /^https?:\/\//i.test(String(uri || ''));
+}
+
 function getMimeType(extension) {
   if (extension === 'jpg' || extension === 'jpeg') {
     return 'image/jpeg';
@@ -40,16 +44,19 @@ async function ensureAndroidDownloadDirectory() {
   }
 
   cachedAndroidDirectoryUri = permission.directoryUri;
-  downloadDirectoryStore.write(cachedAndroidDirectoryUri);
+  if (!downloadDirectoryStore.exists) {
+    await downloadDirectoryStore.create({ intermediates: true });
+  }
+  await downloadDirectoryStore.write(cachedAndroidDirectoryUri);
   return cachedAndroidDirectoryUri;
 }
 
-export async function saveImageToDevice(url, filePrefix = 'Sketch2FloorPlan') {
-  if (!url) {
+export async function saveImageToDevice(sourceUri, filePrefix = 'Sketch2FloorPlan') {
+  if (!sourceUri) {
     throw new Error('There is no image available to download yet.');
   }
 
-  const extension = getExtensionFromUrl(url);
+  const extension = getExtensionFromUrl(sourceUri);
   const mimeType = getMimeType(extension);
   const fileName = `${filePrefix}-${Date.now()}.${extension}`;
   const localDirectory = new Directory(Paths.document, 'Sketch2FloorPlan');
@@ -58,14 +65,20 @@ export async function saveImageToDevice(url, filePrefix = 'Sketch2FloorPlan') {
     localDirectory.create({ idempotent: true, intermediates: true });
   }
 
-  const localFile = new File(localDirectory, fileName);
-  const downloaded = await File.downloadFileAsync(url, localFile, { idempotent: true });
+  let localUri = sourceUri;
+  if (isRemoteSource(sourceUri)) {
+    const localFile = new File(localDirectory, fileName);
+    const downloaded = await File.downloadFileAsync(sourceUri, localFile, { idempotent: true });
+    localUri = downloaded.uri;
+  }
 
   if (Platform.OS === 'android') {
     try {
       const directoryUri = await ensureAndroidDownloadDirectory();
       const targetUri = await FileSystemLegacy.StorageAccessFramework.createFileAsync(directoryUri, fileName, mimeType);
-      const base64 = await downloaded.base64();
+      const base64 = await FileSystemLegacy.readAsStringAsync(localUri, {
+        encoding: FileSystemLegacy.EncodingType.Base64,
+      });
 
       await FileSystemLegacy.writeAsStringAsync(targetUri, base64, {
         encoding: FileSystemLegacy.EncodingType.Base64,
@@ -85,13 +98,13 @@ export async function saveImageToDevice(url, filePrefix = 'Sketch2FloorPlan') {
   }
 
   if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(downloaded.uri, {
+    await Sharing.shareAsync(localUri, {
       dialogTitle: 'Save floorplan',
       mimeType,
     });
 
     return {
-      uri: downloaded.uri,
+      uri: localUri,
       message: 'Opened save options',
     };
   }

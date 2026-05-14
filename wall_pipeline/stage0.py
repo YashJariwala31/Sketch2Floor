@@ -61,14 +61,14 @@ def main():
         angle = utils.compute_angle_between_vectors(v1, v2)
         print(f"Angle between {v1} and {v2}: {angle:.2f}°")
     
-    output_path = "data/intermediate/stage0_grayscale.png"
+    output_path = os.path.join(utils.get_intermediate_dir(), "stage0_grayscale.png")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     if cv2.imwrite(output_path, grayscale_image):
         print(f"\nGrayscale image saved to: {output_path}")
     else:
         print(f"\nError: Could not save grayscale image to {output_path}")
     
-    scale_factors_path = os.path.join("data", "intermediate", "scale_factors.json")
+    scale_factors_path = os.path.join(utils.get_intermediate_dir(), "scale_factors.json")
     utils.save_json({"scale_x": scale_x, "scale_y": scale_y}, scale_factors_path)
     print(f"\nScale factors saved to: {scale_factors_path}")
     print("\nStage 0 completed successfully!")

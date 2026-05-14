@@ -84,7 +84,7 @@ class WallPolygon:
 def load_wall_graph(graph_path=None):
     """Load wall graph from Stage 3 output."""
     if graph_path is None:
-        graph_path = os.path.join("data", "intermediate", "wall_graph.json")
+        graph_path = os.path.join(utils.get_intermediate_dir(), "wall_graph.json")
     
     data = utils.load_json(graph_path)
     nodes = data['nodes']
@@ -524,7 +524,7 @@ def process_walls():
 def save_wall_polygons(polygons: List[WallPolygon], output_path=None):
     """Save wall polygons to JSON file, upscaled to original image coordinates."""
     if output_path is None:
-        output_path = os.path.join("data", "intermediate", "wall_polygons.json")
+        output_path = os.path.join(utils.get_intermediate_dir(), "wall_polygons.json")
     
     sx, sy = utils.load_scale_factors()
     print(f"Loaded scale factors: sx={sx:.4f}, sy={sy:.4f}")
@@ -552,7 +552,7 @@ def save_wall_polygons(polygons: List[WallPolygon], output_path=None):
 def visualize_walls(polygons: List[WallPolygon], output_path=None):
     """Visualize wall polygons as CAD-like drawing."""
     if output_path is None:
-        output_path = os.path.join("data", "intermediate", "stage5_wall_overlay.png")
+        output_path = os.path.join(utils.get_intermediate_dir(), "stage5_wall_overlay.png")
     
     # Determine canvas size
     if not polygons:

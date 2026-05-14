@@ -195,7 +195,7 @@ def extract_room_polygons(labels, valid_regions, img_shape):
 def save_outputs(rooms, save_dir=None):
     """Save room polygons to JSON file."""
     if save_dir is None:
-        save_dir = os.path.join("data", "intermediate")
+        save_dir = utils.get_intermediate_dir()
     
     json_path = os.path.join(save_dir, "room_polygons.json")
     utils.save_json(rooms, json_path)
@@ -209,7 +209,7 @@ def save_outputs(rooms, save_dir=None):
 def visualize(rooms, mask, save_dir=None):
     """Visualize detected rooms as colored polygons overlaid on wall mask."""
     if save_dir is None:
-        save_dir = os.path.join("data", "intermediate")
+        save_dir = utils.get_intermediate_dir()
     
     h, w = mask.shape[:2]
     
