@@ -8,6 +8,14 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function isFiniteNumber(value) {
+  return Number.isFinite(value);
+}
+
+function isFinitePoint(point) {
+  return isFiniteNumber(point?.x) && isFiniteNumber(point?.y);
+}
+
 function dist(a, b) {
   const dx = (a?.x ?? 0) - (b?.x ?? 0);
   const dy = (a?.y ?? 0) - (b?.y ?? 0);
@@ -30,6 +38,10 @@ function snapAxisAlignedPoint(anchor, moving) {
 }
 
 function intelligentNormal(p1, p2, center) {
+  if (!isFinitePoint(p1) || !isFinitePoint(p2) || !isFinitePoint(center)) {
+    return { x: 0, y: -1 };
+  }
+
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -46,7 +58,65 @@ function intelligentNormal(p1, p2, center) {
   return { x: nx, y: ny };
 }
 
+function resolveMeasurementPlacement({
+  p1,
+  p2,
+  center,
+  renderWidth,
+  renderHeight,
+  styleScale,
+  textWidth,
+  textHeight,
+}) {
+  const preferredNormal = intelligentNormal(p1, p2, center);
+  const fallbackNormal = { x: -preferredNormal.x, y: -preferredNormal.y };
+  const isHorizontal = Math.abs((p2?.x ?? 0) - (p1?.x ?? 0)) >= Math.abs((p2?.y ?? 0) - (p1?.y ?? 0));
+  const desiredOffset = 42 * styleScale;
+  const minimumOffset = 18 * styleScale;
+  const margin = 14 * styleScale;
+  const extOvershoot = 10 * styleScale;
+  const tickSize = 7 * styleScale;
+  const labelHalfDepth = (isHorizontal ? textHeight : textWidth) / 2;
+  const outwardExtra = Math.max(extOvershoot + tickSize, labelHalfDepth);
+
+  function candidateFor(normal) {
+    const sign = isHorizontal ? Math.sign(normal.y || 1) : Math.sign(normal.x || 1);
+    const anchor = isHorizontal ? (p1?.y ?? 0) : (p1?.x ?? 0);
+    const span = isHorizontal ? renderHeight : renderWidth;
+    const available = sign >= 0
+      ? span - margin - anchor - outwardExtra
+      : anchor - margin - outwardExtra;
+    const safeAvailable = Math.max(0, available);
+    let offset = Math.min(desiredOffset, safeAvailable);
+    if (offset < minimumOffset && safeAvailable >= minimumOffset * 0.55) {
+      offset = safeAvailable;
+    }
+
+    return {
+      normal,
+      offset: Math.max(0, offset),
+      available: safeAvailable,
+      fitsPreferredSide: safeAvailable >= minimumOffset,
+    };
+  }
+
+  const preferred = candidateFor(preferredNormal);
+  const fallback = candidateFor(fallbackNormal);
+
+  if (preferred.fitsPreferredSide) {
+    return preferred;
+  }
+  if (fallback.available > preferred.available) {
+    return fallback;
+  }
+  return preferred.available > 0 ? preferred : fallback;
+}
+
 function architecturalTickPath(point, dir, size = 6) {
+  if (!isFinitePoint(point) || !isFinitePoint(dir) || !isFiniteNumber(size)) {
+    return null;
+  }
+
   const cos45 = Math.cos(Math.PI / 4);
   const sin45 = Math.sin(Math.PI / 4);
   const tx = dir.x * cos45 - dir.y * sin45;
@@ -56,6 +126,10 @@ function architecturalTickPath(point, dir, size = 6) {
   const y1 = point.y + ty * size;
   const x2 = point.x - tx * size;
   const y2 = point.y - ty * size;
+
+  if (![x1, y1, x2, y2].every(Number.isFinite)) {
+    return null;
+  }
 
   return `M ${x1} ${y1} L ${x2} ${y2}`;
 }
@@ -115,6 +189,18 @@ function scaleMeasurement(measurement, scaleFactor) {
       : measurement?.p1,
     p2: measurement?.p2
       ? { x: measurement.p2.x * scaleFactor, y: measurement.p2.y * scaleFactor }
+      : measurement?.p2,
+  };
+}
+
+function translateMeasurement(measurement, dx, dy) {
+  return {
+    ...measurement,
+    p1: measurement?.p1
+      ? { x: measurement.p1.x + dx, y: measurement.p1.y + dy }
+      : measurement?.p1,
+    p2: measurement?.p2
+      ? { x: measurement.p2.x + dx, y: measurement.p2.y + dy }
       : measurement?.p2,
   };
 }
@@ -502,20 +588,60 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
 
   const renderedMeasurements = useMemo(() => {
     const list = Array.isArray(annotations) ? annotations : [];
-    return list.filter((item) => item && item.type === 'linear' && item.p1 && item.p2);
+    return list.filter((item) => item && item.type === 'linear' && isFinitePoint(item.p1) && isFinitePoint(item.p2));
   }, [annotations]);
 
   const exportMeasurements = useMemo(
     () => renderedMeasurements.map((measurement) => scaleMeasurement(measurement, exportScale)),
     [renderedMeasurements, exportScale]
   );
+  const editorPadding = useMemo(() => {
+    if (!fitted.w || !fitted.h) {
+      return 56;
+    }
+    return Math.max(56, Math.round(Math.min(fitted.w, fitted.h) * 0.08));
+  }, [fitted.w, fitted.h]);
+  const editorMeasurementsWithPadding = useMemo(
+    () => renderedMeasurements.map((measurement) => translateMeasurement(measurement, editorPadding, editorPadding)),
+    [renderedMeasurements, editorPadding]
+  );
+  const exportPadding = useMemo(() => {
+    if (!naturalSize) {
+      return 88;
+    }
+    return Math.max(88, Math.round(Math.min(naturalSize.w, naturalSize.h) * 0.08));
+  }, [naturalSize]);
+  const exportMeasurementsWithPadding = useMemo(
+    () => exportMeasurements.map((measurement) => translateMeasurement(measurement, exportPadding, exportPadding)),
+    [exportMeasurements, exportPadding]
+  );
+  const editorRenderWidth = fitted.w + editorPadding * 2;
+  const editorRenderHeight = fitted.h + editorPadding * 2;
 
   function renderMeasurement(measurement, renderWidth = fitted.w, renderHeight = fitted.h, isExport = false) {
     const p1 = measurement.p1;
     const p2 = measurement.p2;
+    if (!isFinitePoint(p1) || !isFinitePoint(p2) || !isFiniteNumber(renderWidth) || !isFiniteNumber(renderHeight)) {
+      return null;
+    }
+
     const center = { x: renderWidth / 2, y: renderHeight / 2 };
-    const normal = intelligentNormal(p1, p2, center);
-    const offset = 42;
+    const styleScale = isExport ? Math.max(1, Math.min(1.8, Math.sqrt(exportScale || 1))) : 1;
+    const text = (measurement.textOverride || '').trim() || defaultMeasurementText(measurement, pixelsPerUnit);
+    const textWidth = text.length * 12 + 28;
+    const textHeight = 34;
+    const placement = resolveMeasurementPlacement({
+      p1,
+      p2,
+      center,
+      renderWidth,
+      renderHeight,
+      styleScale,
+      textWidth,
+      textHeight,
+    });
+    const normal = placement.normal;
+    const offset = placement.offset;
     const d1 = { x: p1.x + normal.x * offset, y: p1.y + normal.y * offset };
     const d2 = { x: p2.x + normal.x * offset, y: p2.y + normal.y * offset };
 
@@ -523,9 +649,11 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
     const dy = d2.y - d1.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const dir = { x: dx / len, y: dy / len };
+    const tick1Path = architecturalTickPath(d1, dir, 7 * styleScale);
+    const tick2Path = architecturalTickPath(d2, dir, 7 * styleScale);
 
-    const extGap = 8;
-    const extOvershoot = 10;
+    const extGap = 8 * styleScale;
+    const extOvershoot = 10 * styleScale;
     const e1Start = { x: p1.x + normal.x * extGap, y: p1.y + normal.y * extGap };
     const e1End = { x: d1.x + normal.x * extOvershoot, y: d1.y + normal.y * extOvershoot };
     const e2Start = { x: p2.x + normal.x * extGap, y: p2.y + normal.y * extGap };
@@ -534,28 +662,24 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
     const isSelected = !isExport && selectedId === measurement.id;
     const stroke = isSelected ? theme.colors.accent : theme.colors.text;
     const helper = isSelected ? theme.colors.accentSoft : 'transparent';
-    const strokeWidth = 2;
+    const strokeWidth = 2 * styleScale;
     const mid = midpoint(d1, d2);
-    const text = (measurement.textOverride || '').trim() || defaultMeasurementText(measurement, pixelsPerUnit);
 
     let angle = Math.atan2(dy, dx) * (180 / Math.PI);
     if (angle > 90 || angle < -90) {
       angle += 180;
     }
 
-    const textWidth = text.length * 12 + 28;
-    const textHeight = 34;
-
     return (
       <G key={measurement.id}>
-        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={helper} strokeWidth={18} strokeLinecap="round" />
+        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={helper} strokeWidth={18 * styleScale} strokeLinecap="round" />
         <Line x1={e1Start.x} y1={e1Start.y} x2={e1End.x} y2={e1End.y} stroke={stroke} strokeWidth={strokeWidth} opacity={0.6} />
         <Line x1={e2Start.x} y1={e2Start.y} x2={e2End.x} y2={e2End.y} stroke={stroke} strokeWidth={strokeWidth} opacity={0.6} />
         <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={stroke} strokeWidth={strokeWidth} />
-        <Path d={architecturalTickPath(d1, dir, 7)} stroke={stroke} strokeWidth={2.25} strokeLinecap="round" />
-        <Path d={architecturalTickPath(d2, dir, 7)} stroke={stroke} strokeWidth={2.25} strokeLinecap="round" />
-        <Circle cx={p1.x} cy={p1.y} r={isSelected ? 7 : 5} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2.25 : 1.75} />
-        <Circle cx={p2.x} cy={p2.y} r={isSelected ? 7 : 5} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2.25 : 1.75} />
+        {tick1Path ? <Path d={tick1Path} stroke={stroke} strokeWidth={2.25 * styleScale} strokeLinecap="round" /> : null}
+        {tick2Path ? <Path d={tick2Path} stroke={stroke} strokeWidth={2.25 * styleScale} strokeLinecap="round" /> : null}
+        <Circle cx={p1.x} cy={p1.y} r={isSelected ? 7 * styleScale : 5 * styleScale} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2.25 * styleScale : 1.75 * styleScale} />
+        <Circle cx={p2.x} cy={p2.y} r={isSelected ? 7 * styleScale : 5 * styleScale} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2.25 * styleScale : 1.75 * styleScale} />
         <Rect
           x={mid.x - textWidth / 2}
           y={mid.y - textHeight / 2}
@@ -588,11 +712,29 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
       {imageUri && naturalSize ? (
         <View style={s.exportSurface}>
           <ViewShot ref={exportShotRef} options={{ format: 'png', quality: 1, result: 'tmpfile' }}>
-            <View style={{ width: naturalSize.w, height: naturalSize.h, backgroundColor: theme.colors.surface }}>
-              <Image source={{ uri: imageUri }} style={{ width: naturalSize.w, height: naturalSize.h }} resizeMode="stretch" />
-              <Svg width={naturalSize.w} height={naturalSize.h} style={StyleSheet.absoluteFill}>
-                <Rect x={0} y={0} width={naturalSize.w} height={naturalSize.h} fill="transparent" />
-                {exportMeasurements.map((measurement) => renderMeasurement(measurement, naturalSize.w, naturalSize.h, true))}
+            <View
+              style={{
+                width: naturalSize.w + exportPadding * 2,
+                height: naturalSize.h + exportPadding * 2,
+                backgroundColor: theme.colors.surface,
+              }}
+            >
+              <Image
+                source={{ uri: imageUri }}
+                style={{
+                  position: 'absolute',
+                  left: exportPadding,
+                  top: exportPadding,
+                  width: naturalSize.w,
+                  height: naturalSize.h,
+                }}
+                resizeMode="stretch"
+              />
+              <Svg width={naturalSize.w + exportPadding * 2} height={naturalSize.h + exportPadding * 2} style={StyleSheet.absoluteFill}>
+                <Rect x={0} y={0} width={naturalSize.w + exportPadding * 2} height={naturalSize.h + exportPadding * 2} fill="transparent" />
+                {exportMeasurementsWithPadding.map((measurement) =>
+                  renderMeasurement(measurement, naturalSize.w + exportPadding * 2, naturalSize.h + exportPadding * 2, true)
+                )}
               </Svg>
             </View>
           </ViewShot>
@@ -623,34 +765,62 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
             <Animated.View
               style={{
                 position: 'absolute',
-                left: fitted.x,
-                top: fitted.y,
-                width: fitted.w,
-                height: fitted.h,
+                left: fitted.x - editorPadding,
+                top: fitted.y - editorPadding,
+                width: editorRenderWidth,
+                height: editorRenderHeight,
                 transform: [{ translateX: animatedTranslateX }, { translateY: animatedTranslateY }, { scale: animatedScale }],
               }}
             >
-              <View style={{ width: fitted.w, height: fitted.h, backgroundColor: theme.colors.surface }}>
-                {imageUri ? <Image source={{ uri: imageUri }} style={{ width: fitted.w, height: fitted.h }} resizeMode="stretch" /> : null}
-                <Svg width={fitted.w} height={fitted.h} style={StyleSheet.absoluteFill}>
-                  <Rect x={0} y={0} width={fitted.w} height={fitted.h} fill="transparent" />
-                  {renderedMeasurements.map(renderMeasurement)}
+              <View style={{ width: editorRenderWidth, height: editorRenderHeight, backgroundColor: theme.colors.surface }}>
+                {imageUri ? (
+                  <Image
+                    source={{ uri: imageUri }}
+                    style={{
+                      position: 'absolute',
+                      left: editorPadding,
+                      top: editorPadding,
+                      width: fitted.w,
+                      height: fitted.h,
+                    }}
+                    resizeMode="stretch"
+                  />
+                ) : null}
+                <Svg width={editorRenderWidth} height={editorRenderHeight} style={StyleSheet.absoluteFill}>
+                  <Rect x={0} y={0} width={editorRenderWidth} height={editorRenderHeight} fill="transparent" />
+                  {editorMeasurementsWithPadding.map((measurement) =>
+                    renderMeasurement(measurement, editorRenderWidth, editorRenderHeight, false)
+                  )}
 
                   {measurementMode && pendingStartPoint ? (
                     <G>
-                      <Circle cx={pendingStartPoint.x} cy={pendingStartPoint.y} r={6} fill={theme.colors.accent} stroke="#fff" strokeWidth={2} />
+                      <Circle
+                        cx={pendingStartPoint.x + editorPadding}
+                        cy={pendingStartPoint.y + editorPadding}
+                        r={6}
+                        fill={theme.colors.accent}
+                        stroke="#fff"
+                        strokeWidth={2}
+                      />
                       {pendingCurrentPoint ? (
                         <>
                           <Line
-                            x1={pendingStartPoint.x}
-                            y1={pendingStartPoint.y}
-                            x2={pendingCurrentPoint.x}
-                            y2={pendingCurrentPoint.y}
+                            x1={pendingStartPoint.x + editorPadding}
+                            y1={pendingStartPoint.y + editorPadding}
+                            x2={pendingCurrentPoint.x + editorPadding}
+                            y2={pendingCurrentPoint.y + editorPadding}
                             stroke={theme.colors.accent}
                             strokeWidth={2}
                             strokeDasharray="4 4"
                           />
-                          <Circle cx={pendingCurrentPoint.x} cy={pendingCurrentPoint.y} r={6} fill={theme.colors.accent} stroke="#fff" strokeWidth={2} />
+                          <Circle
+                            cx={pendingCurrentPoint.x + editorPadding}
+                            cy={pendingCurrentPoint.y + editorPadding}
+                            r={6}
+                            fill={theme.colors.accent}
+                            stroke="#fff"
+                            strokeWidth={2}
+                          />
                         </>
                       ) : null}
                     </G>

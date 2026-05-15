@@ -11,6 +11,16 @@ function jobAnnotatedPreviewFile(jobId) {
   return new File(Paths.document, `s2fp_annotations_preview_${safe}.png`);
 }
 
+function jobAnnotatedPreviewPointerFile(jobId) {
+  const safe = String(jobId ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  return new File(Paths.document, `s2fp_annotations_preview_${safe}.txt`);
+}
+
+function versionedAnnotatedPreviewFile(jobId) {
+  const safe = String(jobId ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  return new File(Paths.document, `s2fp_annotations_preview_${safe}_${Date.now()}.png`);
+}
+
 export async function loadLocalAnnotations(jobId) {
   try {
     const file = jobAnnotationsFile(jobId);
@@ -44,8 +54,19 @@ export async function saveLocalAnnotations(jobId, annotations) {
 
 export async function loadAnnotatedPreview(jobId) {
   try {
-    const file = jobAnnotatedPreviewFile(jobId);
-    return file.exists ? file.uri : null;
+    const pointerFile = jobAnnotatedPreviewPointerFile(jobId);
+    if (pointerFile.exists) {
+      const latestUri = (await pointerFile.text()).trim();
+      if (latestUri) {
+        const latestFile = new File(latestUri);
+        if (latestFile.exists) {
+          return latestFile.uri;
+        }
+      }
+    }
+
+    const legacyFile = jobAnnotatedPreviewFile(jobId);
+    return legacyFile.exists ? legacyFile.uri : null;
   } catch (_err) {
     return null;
   }
@@ -56,12 +77,33 @@ export async function saveAnnotatedPreview(jobId, sourceUri) {
     return null;
   }
 
-  const file = jobAnnotatedPreviewFile(jobId);
-  await FileSystemLegacy.deleteAsync(file.uri, { idempotent: true });
+  const pointerFile = jobAnnotatedPreviewPointerFile(jobId);
+  let previousUri = null;
+
+  if (pointerFile.exists) {
+    previousUri = (await pointerFile.text()).trim() || null;
+  }
+
+  const file = versionedAnnotatedPreviewFile(jobId);
   await FileSystemLegacy.copyAsync({
     from: sourceUri,
     to: file.uri,
   });
+
+  if (!pointerFile.exists) {
+    await pointerFile.create({ intermediates: true });
+  }
+  await pointerFile.write(file.uri);
+
+  if (previousUri && previousUri !== file.uri) {
+    await FileSystemLegacy.deleteAsync(previousUri, { idempotent: true });
+  }
+
+  const legacyFile = jobAnnotatedPreviewFile(jobId);
+  if (legacyFile.uri !== file.uri) {
+    await FileSystemLegacy.deleteAsync(legacyFile.uri, { idempotent: true });
+  }
+
   return file.uri;
 }
 
