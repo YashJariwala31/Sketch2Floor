@@ -18,6 +18,17 @@ function midpoint(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
+function snapAxisAlignedPoint(anchor, moving) {
+  const dx = (moving?.x ?? 0) - (anchor?.x ?? 0);
+  const dy = (moving?.y ?? 0) - (anchor?.y ?? 0);
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return { x: moving.x, y: anchor.y };
+  }
+
+  return { x: anchor.x, y: moving.y };
+}
+
 function intelligentNormal(p1, p2, center) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
@@ -66,11 +77,12 @@ function defaultMeasurementText(measurement, pixelsPerUnit = 1) {
 }
 
 function makeLinearMeasurement(p1, p2) {
+  const snappedP2 = snapAxisAlignedPoint(p1, p2);
   return {
     id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     type: 'linear',
     p1,
-    p2,
+    p2: snappedP2,
     textOverride: '',
     createdAt: new Date().toISOString(),
   };
@@ -335,8 +347,10 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
           return;
         }
 
-        if (dist(pendingStartPoint, point) > 6) {
-          addMeasurement(makeLinearMeasurement(pendingStartPoint, point));
+        const snappedPoint = snapAxisAlignedPoint(pendingStartPoint, point);
+
+        if (dist(pendingStartPoint, snappedPoint) > 6) {
+          addMeasurement(makeLinearMeasurement(pendingStartPoint, snappedPoint));
         }
 
         setPendingStartPoint(null);
@@ -417,7 +431,8 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
         }
 
         if (drag.part === 'draw_preview') {
-          setPendingCurrentPoint(screenToImagePoint(event.x, event.y));
+          const currentPoint = screenToImagePoint(event.x, event.y);
+          setPendingCurrentPoint(pendingStartPoint ? snapAxisAlignedPoint(pendingStartPoint, currentPoint) : currentPoint);
           return;
         }
 
@@ -428,9 +443,17 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
           const base = drag.startMeasurement;
 
           if (drag.part === 'p1') {
-            updateMeasurement(drag.id, { p1: { x: base.p1.x + dx, y: base.p1.y + dy } }, { trackHistory: false });
+            updateMeasurement(
+              drag.id,
+              { p1: snapAxisAlignedPoint(base.p2, { x: base.p1.x + dx, y: base.p1.y + dy }) },
+              { trackHistory: false }
+            );
           } else if (drag.part === 'p2') {
-            updateMeasurement(drag.id, { p2: { x: base.p2.x + dx, y: base.p2.y + dy } }, { trackHistory: false });
+            updateMeasurement(
+              drag.id,
+              { p2: snapAxisAlignedPoint(base.p1, { x: base.p2.x + dx, y: base.p2.y + dy }) },
+              { trackHistory: false }
+            );
           } else if (drag.part === 'line') {
             updateMeasurement(
               drag.id,
@@ -449,8 +472,9 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
           lastTranslate.current = { ...translate.current };
         } else if (drag?.part === 'draw_preview') {
           const endPoint = screenToImagePoint(event.x, event.y);
-          if (pendingStartPoint && dist(pendingStartPoint, endPoint) > 6) {
-            addMeasurement(makeLinearMeasurement(pendingStartPoint, endPoint));
+          const snappedPoint = pendingStartPoint ? snapAxisAlignedPoint(pendingStartPoint, endPoint) : endPoint;
+          if (pendingStartPoint && dist(pendingStartPoint, snappedPoint) > 6) {
+            addMeasurement(makeLinearMeasurement(pendingStartPoint, snappedPoint));
           }
           setPendingStartPoint(null);
           setPendingCurrentPoint(null);
@@ -491,7 +515,7 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
     const p2 = measurement.p2;
     const center = { x: renderWidth / 2, y: renderHeight / 2 };
     const normal = intelligentNormal(p1, p2, center);
-    const offset = 36;
+    const offset = 42;
     const d1 = { x: p1.x + normal.x * offset, y: p1.y + normal.y * offset };
     const d2 = { x: p2.x + normal.x * offset, y: p2.y + normal.y * offset };
 
@@ -500,8 +524,8 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const dir = { x: dx / len, y: dy / len };
 
-    const extGap = 6;
-    const extOvershoot = 8;
+    const extGap = 8;
+    const extOvershoot = 10;
     const e1Start = { x: p1.x + normal.x * extGap, y: p1.y + normal.y * extGap };
     const e1End = { x: d1.x + normal.x * extOvershoot, y: d1.y + normal.y * extOvershoot };
     const e2Start = { x: p2.x + normal.x * extGap, y: p2.y + normal.y * extGap };
@@ -510,7 +534,7 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
     const isSelected = !isExport && selectedId === measurement.id;
     const stroke = isSelected ? theme.colors.accent : theme.colors.text;
     const helper = isSelected ? theme.colors.accentSoft : 'transparent';
-    const strokeWidth = 1.5;
+    const strokeWidth = 2;
     const mid = midpoint(d1, d2);
     const text = (measurement.textOverride || '').trim() || defaultMeasurementText(measurement, pixelsPerUnit);
 
@@ -519,19 +543,19 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
       angle += 180;
     }
 
-    const textWidth = text.length * 9 + 14;
-    const textHeight = 22;
+    const textWidth = text.length * 12 + 28;
+    const textHeight = 34;
 
     return (
       <G key={measurement.id}>
-        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={helper} strokeWidth={16} strokeLinecap="round" />
+        <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={helper} strokeWidth={18} strokeLinecap="round" />
         <Line x1={e1Start.x} y1={e1Start.y} x2={e1End.x} y2={e1End.y} stroke={stroke} strokeWidth={strokeWidth} opacity={0.6} />
         <Line x1={e2Start.x} y1={e2Start.y} x2={e2End.x} y2={e2End.y} stroke={stroke} strokeWidth={strokeWidth} opacity={0.6} />
         <Line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke={stroke} strokeWidth={strokeWidth} />
-        <Path d={architecturalTickPath(d1, dir, 5)} stroke={stroke} strokeWidth={2} strokeLinecap="round" />
-        <Path d={architecturalTickPath(d2, dir, 5)} stroke={stroke} strokeWidth={2} strokeLinecap="round" />
-        <Circle cx={p1.x} cy={p1.y} r={isSelected ? 6 : 4} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2 : 1.5} />
-        <Circle cx={p2.x} cy={p2.y} r={isSelected ? 6 : 4} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2 : 1.5} />
+        <Path d={architecturalTickPath(d1, dir, 7)} stroke={stroke} strokeWidth={2.25} strokeLinecap="round" />
+        <Path d={architecturalTickPath(d2, dir, 7)} stroke={stroke} strokeWidth={2.25} strokeLinecap="round" />
+        <Circle cx={p1.x} cy={p1.y} r={isSelected ? 7 : 5} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2.25 : 1.75} />
+        <Circle cx={p2.x} cy={p2.y} r={isSelected ? 7 : 5} fill={theme.colors.surface} stroke={stroke} strokeWidth={isSelected ? 2.25 : 1.75} />
         <Rect
           x={mid.x - textWidth / 2}
           y={mid.y - textHeight / 2}
@@ -545,7 +569,7 @@ const FloorplanAnnotator = forwardRef(function FloorplanAnnotator({
           x={mid.x}
           y={mid.y + 1}
           fill={stroke}
-          fontSize={13}
+          fontSize={25}
           fontWeight="700"
           textAnchor="middle"
           alignmentBaseline="central"
