@@ -20,6 +20,11 @@ class FloorplanJobListCreateView(generics.ListCreateAPIView):
     serializer_class = FloorplanJobSerializer
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    def create(self, request, *args, **kwargs):
+        if not request.FILES.get('original_image'):
+            return Response({'detail': 'Upload an original image before creating a job.'}, status=400)
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         image = self.request.FILES.get('original_image')
         name = serializer.validated_data.get('name') or 'New floorplan job'

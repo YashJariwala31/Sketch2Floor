@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { createJobWithImage, deleteJob, fetchJobs, startJob, testBackendConnection } from '../api/client';
+import { deleteLocalJobArtifacts } from '../utils/annotationStorage';
 import { saveImageToDevice } from '../utils/saveImageToDevice';
 
 const POLLABLE_STATUSES = new Set(['queued', 'processing']);
@@ -141,6 +142,7 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
       setBusy(true);
       setError('');
       await deleteJob(job.id);
+      await deleteLocalJobArtifacts(job.id);
       setSelectedJob((currentJob) => (currentJob?.id === job.id ? null : currentJob));
       await loadJobs({ showLoading: false });
       return true;

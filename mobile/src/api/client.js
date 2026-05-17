@@ -37,9 +37,64 @@ const API_BASE_URL = `http://${API_HOST}:8000/api`;
 async function readJson(response) {
   const text = await response.text();
   if (!text) {
-    return null;
+    return { data: null, rawText: '' };
   }
-  return JSON.parse(text);
+
+  try {
+    return {
+      data: JSON.parse(text),
+      rawText: text,
+    };
+  } catch (_err) {
+    return {
+      data: null,
+      rawText: text,
+    };
+  }
+}
+
+function flattenDetailValue(value) {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    const nested = value.map(flattenDetailValue).filter(Boolean);
+    return nested.length ? nested.join(', ') : '';
+  }
+  if (value && typeof value === 'object') {
+    const nested = Object.entries(value)
+      .map(([key, nestedValue]) => {
+        const resolved = flattenDetailValue(nestedValue);
+        return resolved ? `${key}: ${resolved}` : '';
+      })
+      .filter(Boolean);
+    return nested.length ? nested.join(' | ') : '';
+  }
+  return '';
+}
+
+function extractErrorMessage(data, rawText, fallbackMessage, status) {
+  const directMessage = flattenDetailValue(data?.detail);
+  if (directMessage) {
+    return directMessage;
+  }
+
+  const wrappedMessage = flattenDetailValue(data?.error?.message);
+  if (wrappedMessage && wrappedMessage !== 'Request failed.') {
+    return wrappedMessage;
+  }
+
+  const wrappedDetails = flattenDetailValue(data?.error?.details);
+  if (wrappedDetails) {
+    return wrappedDetails;
+  }
+
+  if (typeof rawText === 'string' && rawText.trim()) {
+    const compact = rawText.replace(/\s+/g, ' ').trim();
+    return compact.length > 220 ? `${compact.slice(0, 217)}...` : compact;
+  }
+
+  return `${fallbackMessage} with ${status}`;
 }
 
 function buildNetworkError(err) {
@@ -62,10 +117,14 @@ async function request(path, options) {
 
 async function requestJson(path, options, fallbackMessage) {
   const response = await request(path, options);
-  const data = await readJson(response);
+  const { data, rawText } = await readJson(response);
 
   if (!response.ok) {
-    throw new Error(data?.detail || `${fallbackMessage} with ${response.status}`);
+    throw new Error(extractErrorMessage(data, rawText, fallbackMessage, response.status));
+  }
+
+  if (!data && rawText) {
+    throw new Error(`Unexpected backend response from ${path}. Expected JSON but received something else.`);
   }
 
   return data;

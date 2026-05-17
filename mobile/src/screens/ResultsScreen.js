@@ -7,7 +7,7 @@ import { AuthBackdrop } from '../components/auth/AuthVisuals';
 import { useEntranceAnimation } from '../hooks/useEntranceAnimation';
 import { saveJobAnnotations } from '../api/client';
 import MeasurementEditorScreen from './MeasurementEditorScreen';
-import { loadAnnotatedPreview, loadLocalAnnotations, saveAnnotatedPreview, saveLocalAnnotations } from '../utils/annotationStorage';
+import { loadAnnotatedPreview, loadLocalAnnotationState, saveAnnotatedPreview, saveLocalAnnotations } from '../utils/annotationStorage';
 import { getJobStatusMeta, getResultsScreenTitle, trimMultilineText } from '../utils/jobPresentation';
 
 function Loader({ styles }) {
@@ -148,19 +148,35 @@ export default function ResultsScreen({
       setEditorOpen(false);
       setUndoStack([]);
 
-      const fromBackend = Array.isArray(job?.annotations) ? job.annotations : null;
+      const fromBackend = Array.isArray(job?.annotations) ? cloneAnnotations(job.annotations) : null;
+      const localState = await loadLocalAnnotationState(job?.id);
+      const local = Array.isArray(localState?.annotations) ? cloneAnnotations(localState.annotations) : null;
       const preview = await loadAnnotatedPreview(job?.id);
       if (mounted) {
         setAnnotatedPreviewUri(preview);
       }
 
-      if (fromBackend) {
+      if (Array.isArray(fromBackend) && fromBackend.length > 0) {
         if (mounted) setAnnotations(fromBackend);
         return;
       }
 
-      const local = await loadLocalAnnotations(job?.id);
-      if (mounted) setAnnotations(Array.isArray(local) ? local : []);
+      if (Array.isArray(fromBackend) && fromBackend.length === 0) {
+        if (localState?.backendSynced === false && Array.isArray(local) && local.length > 0) {
+          if (mounted) setAnnotations(local);
+          return;
+        }
+
+        if (mounted) setAnnotations([]);
+        return;
+      }
+
+      if (Array.isArray(local) && local.length > 0) {
+        if (mounted) setAnnotations(cloneAnnotations(local));
+        return;
+      }
+
+      if (mounted) setAnnotations(Array.isArray(fromBackend) ? fromBackend : []);
     }
 
     if (job?.id) {
@@ -170,7 +186,7 @@ export default function ResultsScreen({
     return () => {
       mounted = false;
     };
-  }, [job?.id]);
+  }, [job?.id, job?.updated_at, job?.annotations]);
 
   if (!job) {
     return (
@@ -231,35 +247,48 @@ export default function ResultsScreen({
   }
 
   async function persistAnnotations({ showErrorAlert = true } = {}) {
-    if (!job?.id) return;
+    if (!job?.id) {
+      return { ok: false, synced: false };
+    }
+
+    let savedLocally = false;
+
     try {
       setSaveBusy(true);
-      await saveLocalAnnotations(job.id, annotations || []);
-      await saveJobAnnotations(job.id, annotations || []);
-      return true;
-    } catch (err) {
-      if (showErrorAlert) {
-        Alert.alert('Save failed', err.message || 'Unable to save measurements.');
+      const previewUri = await annotatorRef.current?.captureAnnotatedImage?.();
+      if (!previewUri) {
+        throw new Error('Preview is not ready to export yet.');
       }
-      return false;
+
+      const storedPreviewUri = await saveAnnotatedPreview(job.id, previewUri);
+      setAnnotatedPreviewUri(storedPreviewUri);
+
+      await saveLocalAnnotations(job.id, annotations || [], { backendSynced: false });
+      savedLocally = true;
+      await saveJobAnnotations(job.id, annotations || []);
+      await saveLocalAnnotations(job.id, annotations || [], { backendSynced: true });
+      return { ok: true, synced: true };
+    } catch (err) {
+      if (job?.id && savedLocally) {
+        await saveLocalAnnotations(job.id, annotations || [], { backendSynced: false }).catch(() => undefined);
+      }
+
+      if (showErrorAlert) {
+        const message = err.message || 'Unable to save measurements.';
+        if (savedLocally && err?.message && err.message !== 'Preview is not ready to export yet.') {
+          Alert.alert('Saved on this device', `${message}\n\nThe measurements are saved locally, but backend sync did not finish.`);
+        } else {
+          Alert.alert('Save failed', message);
+        }
+      }
+      return { ok: savedLocally, synced: false };
     } finally {
       setSaveBusy(false);
     }
   }
 
   async function handleSaveAnnotations() {
-    const saved = await persistAnnotations({ showErrorAlert: true });
-    if (!saved || !annotatorRef.current?.captureAnnotatedImage || !job?.id) {
-      return;
-    }
-
-    try {
-      const previewUri = await annotatorRef.current.captureAnnotatedImage();
-      const storedPreviewUri = await saveAnnotatedPreview(job.id, previewUri);
-      setAnnotatedPreviewUri(storedPreviewUri);
-    } catch (err) {
-      Alert.alert('Preview update failed', err.message || 'Measurements were saved, but the annotated preview could not be updated.');
-    }
+    await persistAnnotations({ showErrorAlert: true });
   }
 
   async function handleDownloadResult() {

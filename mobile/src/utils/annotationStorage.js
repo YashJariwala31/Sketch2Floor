@@ -21,7 +21,38 @@ function versionedAnnotatedPreviewFile(jobId) {
   return new File(Paths.document, `s2fp_annotations_preview_${safe}_${Date.now()}.png`);
 }
 
-export async function loadLocalAnnotations(jobId) {
+async function deleteFileIfExists(fileOrUri) {
+  if (!fileOrUri) {
+    return;
+  }
+
+  const target = typeof fileOrUri === 'string' ? fileOrUri : fileOrUri.uri;
+  if (!target) {
+    return;
+  }
+
+  await FileSystemLegacy.deleteAsync(target, { idempotent: true });
+}
+
+function normalizeAnnotationState(parsed) {
+  if (Array.isArray(parsed)) {
+    return {
+      annotations: parsed,
+      backendSynced: false,
+    };
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    return {
+      annotations: Array.isArray(parsed.annotations) ? parsed.annotations : [],
+      backendSynced: parsed.backendSynced === true,
+    };
+  }
+
+  return null;
+}
+
+export async function loadLocalAnnotationState(jobId) {
   try {
     const file = jobAnnotationsFile(jobId);
     if (!file.exists) {
@@ -33,16 +64,28 @@ export async function loadLocalAnnotations(jobId) {
       return null;
     }
 
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : null;
+    return normalizeAnnotationState(JSON.parse(raw));
   } catch (_err) {
     return null;
   }
 }
 
-export async function saveLocalAnnotations(jobId, annotations) {
+export async function loadLocalAnnotations(jobId) {
+  const state = await loadLocalAnnotationState(jobId);
+  return state?.annotations ?? null;
+}
+
+export async function saveLocalAnnotations(jobId, annotations, options = {}) {
   const file = jobAnnotationsFile(jobId);
-  const payload = JSON.stringify(Array.isArray(annotations) ? annotations : [], null, 2);
+  const payload = JSON.stringify(
+    {
+      annotations: Array.isArray(annotations) ? annotations : [],
+      backendSynced: options.backendSynced === true,
+      savedAt: new Date().toISOString(),
+    },
+    null,
+    2
+  );
 
   if (!file.exists) {
     await file.create({ intermediates: true });
@@ -105,5 +148,25 @@ export async function saveAnnotatedPreview(jobId, sourceUri) {
   }
 
   return file.uri;
+}
+
+export async function deleteLocalJobArtifacts(jobId) {
+  try {
+    const pointerFile = jobAnnotatedPreviewPointerFile(jobId);
+    let currentPreviewUri = null;
+
+    if (pointerFile.exists) {
+      currentPreviewUri = (await pointerFile.text()).trim() || null;
+    }
+
+    await deleteFileIfExists(jobAnnotationsFile(jobId));
+    await deleteFileIfExists(pointerFile);
+    await deleteFileIfExists(currentPreviewUri);
+    await deleteFileIfExists(jobAnnotatedPreviewFile(jobId));
+  } catch (_err) {
+    return false;
+  }
+
+  return true;
 }
 
