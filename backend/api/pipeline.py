@@ -209,6 +209,7 @@ def process_floorplan_job(job_id: int):
             room_polygons_output = job_outputs['room_polygons_path']
             fused_floorplan_output = job_outputs['fused_floorplan_path']
             placed_doors_path = intermediate_root / 'placed_doors.json'
+            placed_windows_path = intermediate_root / 'placed_windows.json'
             annotated_output = predictions_root / f'{source_stem}_annotated.png'
 
             with PIPELINE_LOCK:
@@ -230,6 +231,7 @@ def process_floorplan_job(job_id: int):
                     room_polygons_output,
                     fused_floorplan_output,
                     placed_doors_path,
+                    placed_windows_path,
                     annotated_output,
                 ]:
                     _unlink_if_exists(transient_path)
@@ -291,10 +293,15 @@ def process_floorplan_job(job_id: int):
                         'S2FP_WALLS_PATH': str(wall_polygons_output),
                         'S2FP_ROOMS_PATH': str(room_polygons_output),
                         'S2FP_PLACED_DOORS_PATH': str(placed_doors_path),
+                        'S2FP_PLACED_WINDOWS_PATH': str(placed_windows_path),
                         'S2FP_OVERLAY_PATH': str(overlay_output),
                     }
                 )
                 command_log.append(_run_command([python, '-m', 'opening_pipeline.run_transform'], env=env))
+
+                job.metadata['pipeline_state'] = 'running_window_placement'
+                job.save(update_fields=['metadata'])
+                command_log.append(_run_command([python, '-m', 'opening_pipeline.run_window_transform'], env=env))
 
                 job.metadata['pipeline_state'] = 'running_overlay_generation'
                 job.save(update_fields=['metadata'])
@@ -307,6 +314,8 @@ def process_floorplan_job(job_id: int):
                             str(image_path),
                             '--doors',
                             str(placed_doors_path),
+                            '--windows',
+                            str(placed_windows_path),
                             '--out',
                             str(overlay_output),
                         ],
@@ -348,6 +357,8 @@ def process_floorplan_job(job_id: int):
                             str(fused_floorplan_output),
                             '--doors',
                             str(placed_doors_path),
+                            '--windows',
+                            str(placed_windows_path),
                             '--out',
                             str(combined_overlay_output),
                         ]

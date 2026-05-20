@@ -329,32 +329,33 @@ def _opening_boxes_from_geometry(geometry: Any) -> List[Tuple[float, float, floa
         return []
 
     boxes: List[Tuple[float, float, float, float]] = []
-    openings = geometry.get("doors")
-    if not isinstance(openings, list):
-        return []
-
-    for opening in openings:
-        if not isinstance(opening, dict):
+    for opening_type in ("doors", "windows"):
+        openings = geometry.get(opening_type)
+        if not isinstance(openings, list):
             continue
 
-        points = _coerce_point_list(opening.get("rotated_box"))
-        if len(points) >= 2:
-            xs = [point[0] for point in points]
-            ys = [point[1] for point in points]
-            box = (min(xs), min(ys), max(xs), max(ys))
-        else:
-            try:
-                x = _as_float(opening.get("x"))
-                y = _as_float(opening.get("y"))
-                width = _as_float(opening.get("width"))
-                height = _as_float(opening.get("height"))
-            except (TypeError, ValueError):
+        for opening in openings:
+            if not isinstance(opening, dict):
                 continue
-            box = (x, y, x + width, y + height)
 
-        if (box[2] - box[0]) <= 1e-6 or (box[3] - box[1]) <= 1e-6:
-            continue
-        boxes.append(box)
+            points = _coerce_point_list(opening.get("rotated_box"))
+            if len(points) >= 2:
+                xs = [point[0] for point in points]
+                ys = [point[1] for point in points]
+                box = (min(xs), min(ys), max(xs), max(ys))
+            else:
+                try:
+                    x = _as_float(opening.get("x"))
+                    y = _as_float(opening.get("y"))
+                    width = _as_float(opening.get("width"))
+                    height = _as_float(opening.get("height"))
+                except (TypeError, ValueError):
+                    continue
+                box = (x, y, x + width, y + height)
+
+            if (box[2] - box[0]) <= 1e-6 or (box[3] - box[1]) <= 1e-6:
+                continue
+            boxes.append(box)
 
     return sorted(
         boxes,
