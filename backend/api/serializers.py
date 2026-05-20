@@ -118,3 +118,12 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
 
     def get_combined_overlay_url(self, obj):
         return self._build_media_url(obj.combined_overlay_path)
+
+
+class FloorplanJobDetailSerializer(FloorplanJobSerializer):
+    class Meta(FloorplanJobSerializer.Meta):
+        read_only_fields = FloorplanJobSerializer.Meta.read_only_fields + [
+            'metadata',
+            'original_image',
+            'original_filename',
+        ]

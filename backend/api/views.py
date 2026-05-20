@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 
 from .models import FloorplanJob
 from .pipeline import is_floorplan_job_active, seed_demo_job, start_floorplan_job_async
-from .serializers import FloorplanJobSerializer
+from .serializers import FloorplanJobDetailSerializer, FloorplanJobSerializer
 from .services import delete_job_assets, get_job_source_stem, mark_job_queued, scaffold_job_outputs
 
 
@@ -44,7 +44,7 @@ class FloorplanJobListCreateView(generics.ListCreateAPIView):
 
 class FloorplanJobDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = FloorplanJob.objects.all()
-    serializer_class = FloorplanJobSerializer
+    serializer_class = FloorplanJobDetailSerializer
 
     def perform_destroy(self, instance):
         delete_job_assets(instance)
@@ -58,14 +58,14 @@ class FloorplanJobStartView(APIView):
             return Response({'detail': 'Upload an original image before starting the job.'}, status=400)
 
         if job.status in {FloorplanJob.Status.QUEUED, FloorplanJob.Status.PROCESSING} and is_floorplan_job_active(job.id):
-            serializer = FloorplanJobSerializer(job, context={'request': request})
+            serializer = FloorplanJobDetailSerializer(job, context={'request': request})
             return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
         scaffold_job_outputs(job, get_job_source_stem(job, f'job_{job.id}'))
         mark_job_queued(job, 'queued_from_api')
         start_floorplan_job_async(job.id)
 
-        serializer = FloorplanJobSerializer(job, context={'request': request})
+        serializer = FloorplanJobDetailSerializer(job, context={'request': request})
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
@@ -79,5 +79,5 @@ class FloorplanJobDemoView(APIView):
             original_filename='36.jpeg',
         )
         seed_demo_job(job)
-        serializer = FloorplanJobSerializer(job, context={'request': request})
+        serializer = FloorplanJobDetailSerializer(job, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)

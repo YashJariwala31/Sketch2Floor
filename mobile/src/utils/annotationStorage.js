@@ -21,6 +21,11 @@ function versionedAnnotatedPreviewFile(jobId) {
   return new File(Paths.document, `s2fp_annotations_preview_${safe}_${Date.now()}.png`);
 }
 
+function jobAnnotatedPreviewPrefix(jobId) {
+  const safe = String(jobId ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `s2fp_annotations_preview_${safe}_`;
+}
+
 async function deleteFileIfExists(fileOrUri) {
   if (!fileOrUri) {
     return;
@@ -32,6 +37,24 @@ async function deleteFileIfExists(fileOrUri) {
   }
 
   await FileSystemLegacy.deleteAsync(target, { idempotent: true });
+}
+
+async function deleteVersionedPreviewFiles(jobId, keepUri = null) {
+  try {
+    const entries = await FileSystemLegacy.readDirectoryAsync(Paths.document.uri);
+    const prefix = jobAnnotatedPreviewPrefix(jobId);
+    const keepTarget = typeof keepUri === 'string' && keepUri ? keepUri : null;
+
+    await Promise.all(
+      entries
+        .filter((name) => name.startsWith(prefix) && name.endsWith('.png'))
+        .map((name) => `${Paths.document.uri}${name}`)
+        .filter((uri) => uri !== keepTarget)
+        .map((uri) => FileSystemLegacy.deleteAsync(uri, { idempotent: true }))
+    );
+  } catch (_err) {
+    return;
+  }
 }
 
 function normalizeAnnotationState(parsed) {
@@ -142,6 +165,8 @@ export async function saveAnnotatedPreview(jobId, sourceUri) {
     await FileSystemLegacy.deleteAsync(previousUri, { idempotent: true });
   }
 
+  await deleteVersionedPreviewFiles(jobId, file.uri);
+
   const legacyFile = jobAnnotatedPreviewFile(jobId);
   if (legacyFile.uri !== file.uri) {
     await FileSystemLegacy.deleteAsync(legacyFile.uri, { idempotent: true });
@@ -163,10 +188,10 @@ export async function deleteLocalJobArtifacts(jobId) {
     await deleteFileIfExists(pointerFile);
     await deleteFileIfExists(currentPreviewUri);
     await deleteFileIfExists(jobAnnotatedPreviewFile(jobId));
+    await deleteVersionedPreviewFiles(jobId);
   } catch (_err) {
     return false;
   }
 
   return true;
 }
-

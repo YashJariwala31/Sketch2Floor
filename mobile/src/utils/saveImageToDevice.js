@@ -62,7 +62,7 @@ export async function saveImageToDevice(sourceUri, filePrefix = 'Sketch2FloorPla
   const localDirectory = new Directory(Paths.document, 'Sketch2FloorPlan');
 
   if (!localDirectory.exists) {
-    localDirectory.create({ idempotent: true, intermediates: true });
+    await localDirectory.create({ idempotent: true, intermediates: true });
   }
 
   let localUri = sourceUri;
@@ -91,7 +91,7 @@ export async function saveImageToDevice(sourceUri, filePrefix = 'Sketch2FloorPla
     } catch (error) {
       cachedAndroidDirectoryUri = null;
       if (downloadDirectoryStore.exists) {
-        downloadDirectoryStore.delete();
+        await downloadDirectoryStore.delete();
       }
       throw error;
     }
