@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,13 +11,27 @@ from .serializers import FloorplanJobDetailSerializer, FloorplanJobSerializer
 from .services import delete_job_assets, get_job_source_stem, mark_job_queued, scaffold_job_outputs
 
 
+def get_request_owner_email(request):
+    return (request.headers.get('X-User-Email') or '').strip().lower()
+
+
+class OwnerScopedJobsMixin:
+    def require_owner_email(self):
+        owner_email = get_request_owner_email(self.request)
+        if not owner_email:
+            raise ValidationError({'detail': 'Sign in again before accessing floor plan jobs.'})
+        return owner_email
+
+    def get_queryset(self):
+        return FloorplanJob.objects.filter(owner_email=self.require_owner_email())
+
+
 class HealthView(APIView):
     def get(self, request):
         return Response({'status': 'ok', 'service': 'sketch2floorplan-backend'})
 
 
-class FloorplanJobListCreateView(generics.ListCreateAPIView):
-    queryset = FloorplanJob.objects.all()
+class FloorplanJobListCreateView(OwnerScopedJobsMixin, generics.ListCreateAPIView):
     serializer_class = FloorplanJobSerializer
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
@@ -28,8 +43,10 @@ class FloorplanJobListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         image = self.request.FILES.get('original_image')
         name = serializer.validated_data.get('name') or 'New floorplan job'
+        owner_email = self.require_owner_email()
         job = serializer.save(
             name=name,
+            owner_email=owner_email,
             status=FloorplanJob.Status.DRAFT,
             original_filename=image.name if image else '',
         )
@@ -42,8 +59,7 @@ class FloorplanJobListCreateView(generics.ListCreateAPIView):
         start_floorplan_job_async(job.id)
 
 
-class FloorplanJobDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = FloorplanJob.objects.all()
+class FloorplanJobDetailView(OwnerScopedJobsMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = FloorplanJobDetailSerializer
 
     def perform_destroy(self, instance):
@@ -53,7 +69,11 @@ class FloorplanJobDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class FloorplanJobStartView(APIView):
     def post(self, request, pk):
-        job = get_object_or_404(FloorplanJob, pk=pk)
+        owner_email = get_request_owner_email(request)
+        if not owner_email:
+            raise ValidationError({'detail': 'Sign in again before starting a floor plan job.'})
+
+        job = get_object_or_404(FloorplanJob, pk=pk, owner_email=owner_email)
         if not job.original_image:
             return Response({'detail': 'Upload an original image before starting the job.'}, status=400)
 
@@ -71,9 +91,14 @@ class FloorplanJobStartView(APIView):
 
 class FloorplanJobDemoView(APIView):
     def post(self, request):
+        owner_email = get_request_owner_email(request)
+        if not owner_email:
+            raise ValidationError({'detail': 'Sign in again before creating a demo floor plan job.'})
+
         name = request.data.get('name') or 'Demo floorplan job'
         job = FloorplanJob.objects.create(
             name=name,
+            owner_email=owner_email,
             description='Sample completed job created from the repository demo outputs.',
             status=FloorplanJob.Status.DRAFT,
             original_filename='36.jpeg',

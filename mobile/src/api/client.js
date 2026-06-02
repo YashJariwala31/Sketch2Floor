@@ -34,6 +34,22 @@ function detectApiHost() {
 const API_HOST = detectApiHost();
 const API_BASE_URL = `http://${API_HOST}:8000/api`;
 
+function normalizeOwnerEmail(ownerEmail) {
+  return String(ownerEmail || '').trim().toLowerCase();
+}
+
+function withOwnerHeaders(ownerEmail, headers = {}) {
+  const normalized = normalizeOwnerEmail(ownerEmail);
+  if (!normalized) {
+    return headers;
+  }
+
+  return {
+    ...headers,
+    'X-User-Email': normalized,
+  };
+}
+
 async function readJson(response) {
   const text = await response.text();
   if (!text) {
@@ -130,22 +146,22 @@ async function requestJson(path, options, fallbackMessage) {
   return data;
 }
 
-export async function patchJob(jobId, payload) {
+export async function patchJob(jobId, payload, ownerEmail) {
   return requestJson(
     `/jobs/${jobId}/`,
     {
       method: 'PATCH',
-      headers: {
+      headers: withOwnerHeaders(ownerEmail, {
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify(payload || {}),
     },
     'Job update failed'
   );
 }
 
-export async function saveJobAnnotations(jobId, annotations) {
-  return patchJob(jobId, { annotations: Array.isArray(annotations) ? annotations : [] });
+export async function saveJobAnnotations(jobId, annotations, ownerEmail) {
+  return patchJob(jobId, { annotations: Array.isArray(annotations) ? annotations : [] }, ownerEmail);
 }
 
 export async function testBackendConnection() {
@@ -167,12 +183,18 @@ export async function testBackendConnection() {
   }
 }
 
-export async function fetchJobs() {
-  const data = await requestJson('/jobs/', undefined, 'Backend request failed');
+export async function fetchJobs(ownerEmail) {
+  const data = await requestJson(
+    '/jobs/',
+    {
+      headers: withOwnerHeaders(ownerEmail),
+    },
+    'Backend request failed'
+  );
   return Array.isArray(data) ? data : [];
 }
 
-export async function createJobWithImage({ name, description, imageUri, imageName, mimeType }) {
+export async function createJobWithImage({ name, description, imageUri, imageName, mimeType, ownerEmail }) {
   const form = new FormData();
   if (name) {
     form.append('name', name);
@@ -190,25 +212,28 @@ export async function createJobWithImage({ name, description, imageUri, imageNam
     '/jobs/',
     {
       method: 'POST',
+      headers: withOwnerHeaders(ownerEmail),
       body: form,
     },
     'Job creation failed'
   );
 }
 
-export async function startJob(jobId) {
+export async function startJob(jobId, ownerEmail) {
   return requestJson(
     `/jobs/${jobId}/start/`,
     {
       method: 'POST',
+      headers: withOwnerHeaders(ownerEmail),
     },
     'Job start failed'
   );
 }
 
-export async function deleteJob(jobId) {
+export async function deleteJob(jobId, ownerEmail) {
   const response = await request(`/jobs/${jobId}/`, {
     method: 'DELETE',
+    headers: withOwnerHeaders(ownerEmail),
   });
 
   if (!response.ok) {

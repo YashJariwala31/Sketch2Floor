@@ -54,6 +54,7 @@ export default function App() {
     saveResult,
   } = useFloorplanJobs({
     enabled: Boolean(session),
+    accountEmail: session?.email,
   });
 
   useEffect(() => {
@@ -247,6 +248,7 @@ export default function App() {
       return (
         <ResultsScreen
           job={selectedJob}
+          accountEmail={session?.email}
           busy={busy}
           error={error}
           onBack={clearSelectedJob}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { createJobWithImage, deleteJob, fetchJobs, startJob, testBackendConnection } from '../api/client';
 import { deleteLocalJobArtifacts } from '../utils/annotationStorage';
@@ -6,13 +6,19 @@ import { saveImageToDevice } from '../utils/saveImageToDevice';
 
 const POLLABLE_STATUSES = new Set(['queued', 'processing']);
 
-export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
+function normalizeAccountEmail(accountEmail) {
+  return String(accountEmail || '').trim().toLowerCase();
+}
+
+export function useFloorplanJobs({ enabled, accountEmail, albumName = 'Sketch2FloorPlan' }) {
   const [jobs, setJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [connection, setConnection] = useState(null);
+  const requestVersionRef = useRef(0);
+  const normalizedAccountEmail = useMemo(() => normalizeAccountEmail(accountEmail), [accountEmail]);
 
   async function refreshConnection() {
     const result = await testBackendConnection();
@@ -28,17 +34,22 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
   }
 
   async function loadJobs({ showLoading = true } = {}) {
-    if (!enabled) {
+    if (!enabled || !normalizedAccountEmail) {
       return [];
     }
+
+    const requestVersion = ++requestVersionRef.current;
 
     try {
       if (showLoading) {
         setLoading(true);
       }
 
-      const [data, connectionResult] = await Promise.all([fetchJobs(), refreshConnection()]);
+      const [data, connectionResult] = await Promise.all([fetchJobs(normalizedAccountEmail), refreshConnection()]);
       const nextJobs = Array.isArray(data) ? data : [];
+      if (requestVersion !== requestVersionRef.current) {
+        return nextJobs;
+      }
       setJobs(nextJobs);
       setSelectedJob((currentJob) => (currentJob ? nextJobs.find((item) => item.id === currentJob.id) || null : null));
 
@@ -62,7 +73,11 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
   }
 
   useEffect(() => {
-    if (enabled) {
+    requestVersionRef.current += 1;
+
+    if (enabled && normalizedAccountEmail) {
+      setJobs([]);
+      setSelectedJob(null);
       loadJobs().catch(() => undefined);
       return;
     }
@@ -73,7 +88,7 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
     setBusy(false);
     setError('');
     setConnection(null);
-  }, [enabled]);
+  }, [enabled, normalizedAccountEmail]);
 
   useEffect(() => {
     if (!enabled || !selectedJob || !POLLABLE_STATUSES.has(selectedJob.status)) {
@@ -98,6 +113,7 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
         imageUri: asset.uri,
         imageName: asset.fileName || fallbackName,
         mimeType: asset.mimeType || 'image/jpeg',
+        ownerEmail: normalizedAccountEmail,
       });
 
       setSelectedJob(created);
@@ -120,7 +136,7 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
     try {
       setBusy(true);
       setError('');
-      const startedJob = await startJob(job.id);
+      const startedJob = await startJob(job.id, normalizedAccountEmail);
       setSelectedJob(startedJob);
       await loadJobs({ showLoading: false });
       return startedJob;
@@ -141,8 +157,8 @@ export function useFloorplanJobs({ enabled, albumName = 'Sketch2FloorPlan' }) {
     try {
       setBusy(true);
       setError('');
-      await deleteJob(job.id);
-      await deleteLocalJobArtifacts(job.id);
+      await deleteJob(job.id, normalizedAccountEmail);
+      await deleteLocalJobArtifacts(job.id, normalizedAccountEmail);
       setSelectedJob((currentJob) => (currentJob?.id === job.id ? null : currentJob));
       await loadJobs({ showLoading: false });
       return true;

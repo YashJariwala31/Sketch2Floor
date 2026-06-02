@@ -11,6 +11,7 @@ class FloorplanJob(models.Model):
 
     name = models.CharField(max_length=120, blank=True)
     description = models.TextField(blank=True)
+    owner_email = models.EmailField(max_length=254, blank=True, default='', db_index=True)
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
     original_image = models.ImageField(upload_to='uploads/originals/', blank=True, null=True)
     original_filename = models.CharField(max_length=255, blank=True)

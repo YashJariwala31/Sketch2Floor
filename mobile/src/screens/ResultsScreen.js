@@ -119,6 +119,7 @@ function cloneAnnotations(list) {
 
 export default function ResultsScreen({
   job,
+  accountEmail,
   busy,
   error,
   onBack,
@@ -149,9 +150,9 @@ export default function ResultsScreen({
       setUndoStack([]);
 
       const fromBackend = Array.isArray(job?.annotations) ? cloneAnnotations(job.annotations) : null;
-      const localState = await loadLocalAnnotationState(job?.id);
+      const localState = await loadLocalAnnotationState(job?.id, accountEmail);
       const local = Array.isArray(localState?.annotations) ? cloneAnnotations(localState.annotations) : null;
-      const preview = await loadAnnotatedPreview(job?.id);
+      const preview = await loadAnnotatedPreview(job?.id, accountEmail);
       if (mounted) {
         setAnnotatedPreviewUri(preview);
       }
@@ -186,7 +187,7 @@ export default function ResultsScreen({
     return () => {
       mounted = false;
     };
-  }, [job?.id, job?.updated_at, job?.annotations]);
+  }, [accountEmail, job?.id, job?.updated_at, job?.annotations]);
 
   if (!job) {
     return (
@@ -260,17 +261,17 @@ export default function ResultsScreen({
         throw new Error('Preview is not ready to export yet.');
       }
 
-      const storedPreviewUri = await saveAnnotatedPreview(job.id, previewUri);
+      const storedPreviewUri = await saveAnnotatedPreview(job.id, previewUri, accountEmail);
       setAnnotatedPreviewUri(storedPreviewUri);
 
-      await saveLocalAnnotations(job.id, annotations || [], { backendSynced: false });
+      await saveLocalAnnotations(job.id, annotations || [], { backendSynced: false, accountKey: accountEmail });
       savedLocally = true;
-      await saveJobAnnotations(job.id, annotations || []);
-      await saveLocalAnnotations(job.id, annotations || [], { backendSynced: true });
+      await saveJobAnnotations(job.id, annotations || [], accountEmail);
+      await saveLocalAnnotations(job.id, annotations || [], { backendSynced: true, accountKey: accountEmail });
       return { ok: true, synced: true };
     } catch (err) {
       if (job?.id && savedLocally) {
-        await saveLocalAnnotations(job.id, annotations || [], { backendSynced: false }).catch(() => undefined);
+        await saveLocalAnnotations(job.id, annotations || [], { backendSynced: false, accountKey: accountEmail }).catch(() => undefined);
       }
 
       if (showErrorAlert) {
