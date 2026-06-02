@@ -23,16 +23,21 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
             'original_filename',
             'original_image',
             'original_image_url',
+            'original_image_cloud_url',
             'annotations',
             'door_mask_path',
             'window_mask_path',
             'door_mask_url',
             'window_mask_url',
+            'door_mask_cloud_url',
+            'window_mask_cloud_url',
             'geometry_path',
             'overlay_path',
             'overlay_url',
+            'overlay_cloud_url',
             'combined_overlay_path',
             'combined_overlay_url',
+            'combined_overlay_cloud_url',
             'wall_polygons_path',
             'room_polygons_path',
             'fused_floorplan_path',
@@ -50,6 +55,11 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
             'wall_polygons_path',
             'room_polygons_path',
             'fused_floorplan_path',
+            'original_image_cloud_url',
+            'door_mask_cloud_url',
+            'window_mask_cloud_url',
+            'overlay_cloud_url',
+            'combined_overlay_cloud_url',
             'created_at',
             'updated_at',
         ]
@@ -86,6 +96,9 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
         return value
 
     def get_original_image_url(self, obj):
+        if obj.original_image_cloud_url:
+            return obj.original_image_cloud_url
+
         request = self.context.get('request')
         if not obj.original_image:
             return None
@@ -108,15 +121,23 @@ class FloorplanJobSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(url) if request else url
 
     def get_door_mask_url(self, obj):
+        if obj.door_mask_cloud_url:
+            return obj.door_mask_cloud_url
         return self._build_media_url(obj.door_mask_path)
 
     def get_window_mask_url(self, obj):
+        if obj.window_mask_cloud_url:
+            return obj.window_mask_cloud_url
         return self._build_media_url(obj.window_mask_path)
 
     def get_overlay_url(self, obj):
+        if obj.overlay_cloud_url:
+            return obj.overlay_cloud_url
         return self._build_media_url(obj.overlay_path)
 
     def get_combined_overlay_url(self, obj):
+        if obj.combined_overlay_cloud_url:
+            return obj.combined_overlay_cloud_url
         return self._build_media_url(obj.combined_overlay_path)
 
 

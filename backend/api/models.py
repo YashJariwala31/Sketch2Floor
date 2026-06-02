@@ -25,6 +25,12 @@ class FloorplanJob(models.Model):
     room_polygons_path = models.CharField(max_length=255, blank=True)
     fused_floorplan_path = models.CharField(max_length=255, blank=True)
 
+    original_image_cloud_url = models.URLField(max_length=500, blank=True)
+    door_mask_cloud_url = models.URLField(max_length=500, blank=True)
+    window_mask_cloud_url = models.URLField(max_length=500, blank=True)
+    overlay_cloud_url = models.URLField(max_length=500, blank=True)
+    combined_overlay_cloud_url = models.URLField(max_length=500, blank=True)
+
     # Client-authored interactive annotations (e.g., measurement dimensions).
     # Stored in image-render coordinates (relative to the rendered/fit image),
     # so the frontend can keep them anchored while zooming/panning.

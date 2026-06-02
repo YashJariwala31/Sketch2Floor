@@ -8,6 +8,7 @@ from pathlib import Path
 
 from django.conf import settings
 
+from .cloudinary_storage import upload_job_artifacts
 from .models import FloorplanJob
 from .services import build_expected_output_paths, get_job_source_stem, scaffold_job_outputs
 
@@ -142,6 +143,10 @@ def seed_demo_job(job: FloorplanJob):
         'demo_source_stem': sample_stem,
     }
     job.save()
+    uploaded = upload_job_artifacts(job)
+    if uploaded:
+        job.metadata = {**job.metadata, 'cloudinary_uploads': uploaded}
+        job.save(update_fields=['metadata', 'updated_at'])
 
 
 def _sync_pipeline_outputs(job: FloorplanJob):
@@ -365,6 +370,7 @@ def process_floorplan_job(job_id: int):
                     )
                 )
 
+            uploaded = upload_job_artifacts(job)
             job.status = FloorplanJob.Status.COMPLETED
             job.metadata = {
                 **job.metadata,
@@ -374,6 +380,7 @@ def process_floorplan_job(job_id: int):
                     'predictions_root': str(predictions_root),
                     'intermediate_root': str(intermediate_root),
                 },
+                'cloudinary_uploads': uploaded,
             }
             job.save(update_fields=['status', 'metadata', 'updated_at'])
         except subprocess.CalledProcessError as exc:

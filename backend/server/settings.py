@@ -29,6 +29,7 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-secret-key-change-me')
 DEBUG = env_bool('DEBUG', True)
 ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', ['*'] if DEBUG else [])
 CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS')
+CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL', '')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
