@@ -31,8 +31,9 @@ function detectApiHost() {
   return Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
 }
 
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL;
 const API_HOST = detectApiHost();
-const API_BASE_URL = `http://${API_HOST}:8000/api`;
+const API_BASE_URL = configuredApiUrl?.replace(/\/+$/, '') || `http://${API_HOST}:8000/api`;
 
 function normalizeOwnerEmail(ownerEmail) {
   return String(ownerEmail || '').trim().toLowerCase();
