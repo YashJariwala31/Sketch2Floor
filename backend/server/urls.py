@@ -8,5 +8,5 @@ urlpatterns = [
     path('api/', include('api.urls')),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+if settings.DEBUG or getattr(settings, 'SERVE_MEDIA_FILES', False):
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT, insecure=not settings.DEBUG)
