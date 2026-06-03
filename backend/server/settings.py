@@ -108,6 +108,8 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 SERVE_MEDIA_FILES = env_bool('SERVE_MEDIA_FILES', True)
+PIPELINE_MAX_IMAGE_SIDE = int(os.environ.get('PIPELINE_MAX_IMAGE_SIDE', '1800'))
+RELEASE_MODEL_AFTER_JOB = env_bool('RELEASE_MODEL_AFTER_JOB', not DEBUG)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

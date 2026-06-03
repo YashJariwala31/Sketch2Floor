@@ -4,6 +4,7 @@ Supports both CLI usage and in-process calling via MaskGenerator for caching.
 """
 
 import argparse
+import gc
 import os
 import random
 import cv2
@@ -29,6 +30,11 @@ def _configure_determinism(seed: int = 0) -> None:
 
     random.seed(seed)
     np.random.seed(seed)
+    torch.set_num_threads(1)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -123,6 +129,10 @@ class MaskGenerator:
 
         cv2.imwrite(door_path, door)
         cv2.imwrite(window_path, window)
+        del img, x, pred, door, window
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return door_path, window_path
 
 def get_generator():
@@ -130,6 +140,13 @@ def get_generator():
     if _CACHED_GENERATOR is None:
         _CACHED_GENERATOR = MaskGenerator()
     return _CACHED_GENERATOR
+
+def release_cached_generator():
+    global _CACHED_GENERATOR
+    _CACHED_GENERATOR = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 def main():
     parser = argparse.ArgumentParser()

@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import FloorplanJob
+from .image_preprocessing import normalize_uploaded_image
 from .pipeline import is_floorplan_job_active, seed_demo_job, start_floorplan_job_async
 from .serializers import FloorplanJobDetailSerializer, FloorplanJobSerializer
 from .services import delete_job_assets, get_job_source_stem, mark_job_queued, scaffold_job_outputs
@@ -54,6 +55,7 @@ class FloorplanJobListCreateView(OwnerScopedJobsMixin, generics.ListCreateAPIVie
         if not image:
             return
 
+        normalize_uploaded_image(job)
         scaffold_job_outputs(job, get_job_source_stem(job))
         mark_job_queued(job, 'queued_from_upload')
         start_floorplan_job_async(job.id)

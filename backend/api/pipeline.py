@@ -1,4 +1,5 @@
 import os
+import gc
 import shutil
 import subprocess
 import sys
@@ -405,6 +406,14 @@ def process_floorplan_job(job_id: int):
             }
             job.save(update_fields=['status', 'metadata', 'updated_at'])
     finally:
+        if getattr(settings, 'RELEASE_MODEL_AFTER_JOB', False):
+            try:
+                from opening_pipeline.test_final import release_cached_generator
+
+                release_cached_generator()
+            except Exception:
+                pass
+        gc.collect()
         _release_job_start(job_id)
 
 
